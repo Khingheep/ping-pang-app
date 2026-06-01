@@ -2,14 +2,24 @@
 const nextConfig = {
   webpack: (config, { isServer }) => {
     if (isServer) {
-      config.externals = [...(config.externals || []), 
+      config.externals = [...(config.externals || []),
         'puppeteer',
         'puppeteer-extra',
         'puppeteer-extra-plugin-stealth',
-        'puppeteer-extra-plugin-anonymize-ua',
+        'puppeteer-real-browser',
+        'bufferutil',
+        'utf-8-validate',
       ]
     }
     return config
+  },
+  experimental: {
+    serverComponentsExternalPackages: [
+      'puppeteer',
+      'puppeteer-extra',
+      'puppeteer-extra-plugin-stealth',
+      'puppeteer-real-browser',
+    ],
   },
 }
 
