@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -33,6 +34,13 @@ export default function DefisScreen() {
       <SafeAreaView edges={['top']} style={styles.flex}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Défis</ThemedText>
+
+          <Pressable style={styles.tournoiBtn} onPress={() => router.push('/tournoi')}>
+            <Ionicons name="trophy" size={18} color={Palette.evergreen} />
+            <ThemedText type="smallBold" themeColor="brand">
+              Créer un tournoi
+            </ThemedText>
+          </Pressable>
 
           <TextInput
             style={styles.search}
@@ -104,6 +112,17 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
+  tournoiBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    alignSelf: 'flex-start',
+    marginTop: Spacing.three,
+    backgroundColor: Palette.lime,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
   search: {
     height: 52,
     marginTop: Spacing.three,
