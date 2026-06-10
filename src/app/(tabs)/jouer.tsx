@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -15,11 +16,13 @@ export default function DefisScreen() {
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    const id = session?.user?.id;
-    if (!id) return;
-    fetchOtherPlayers(id, 100).then(setPlayers);
-  }, [session?.user?.id]);
+  useFocusEffect(
+    useCallback(() => {
+      const id = session?.user?.id;
+      if (!id) return;
+      fetchOtherPlayers(id, 100).then(setPlayers);
+    }, [session?.user?.id]),
+  );
 
   const filtered = players.filter((p) =>
     p.display_name.toLowerCase().includes(query.trim().toLowerCase()),
@@ -71,7 +74,14 @@ export default function DefisScreen() {
                       {p.city ? ` · ${p.city}` : ''}
                     </ThemedText>
                   </View>
-                  <Pressable style={styles.defier}>
+                  <Pressable
+                    style={styles.defier}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/new-match',
+                        params: { opponentId: p.id, opponentName: p.display_name },
+                      })
+                    }>
                     <ThemedText type="smallBold" themeColor="onBrand">
                       Défier
                     </ThemedText>

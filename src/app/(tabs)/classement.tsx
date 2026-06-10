@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -20,9 +21,11 @@ export default function RankingScreen() {
   const [rows, setRows] = useState<LeaderboardEntry[]>([]);
   const myId = session?.user?.id;
 
-  useEffect(() => {
-    fetchLeaderboard(100).then(setRows);
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchLeaderboard(100).then(setRows);
+    }, []),
+  );
 
   const top3 = rows.slice(0, 3);
   const rest = rows.slice(3);

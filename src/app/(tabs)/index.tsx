@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -17,15 +18,17 @@ export default function AccueilScreen() {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [rank, setRank] = useState<number | null>(null);
 
-  useEffect(() => {
-    const id = session?.user?.id;
-    if (!id) return;
-    fetchMyProfile(id).then(setProfile);
-    fetchLeaderboard(200).then((rows) => {
-      const i = rows.findIndex((r) => r.id === id);
-      setRank(i >= 0 ? i + 1 : null);
-    });
-  }, [session?.user?.id]);
+  useFocusEffect(
+    useCallback(() => {
+      const id = session?.user?.id;
+      if (!id) return;
+      fetchMyProfile(id).then(setProfile);
+      fetchLeaderboard(200).then((rows) => {
+        const i = rows.findIndex((r) => r.id === id);
+        setRank(i >= 0 ? i + 1 : null);
+      });
+    }, [session?.user?.id]),
+  );
 
   const name = profile?.display_name ?? 'Joueur';
   const elo = profile?.elo ?? 1200;
