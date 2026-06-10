@@ -37,6 +37,8 @@ function RootNavigator() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="new-match" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="settings" />
+      <Stack.Screen name="player" />
     </Stack>
   );
 }

@@ -7,6 +7,8 @@ export type PlayerProfile = {
   handle: string;
   display_name: string;
   city: string | null;
+  play_style: string | null;
+  handedness: string | null;
   elo: number;
   level: string;
   is_premium: boolean;
@@ -41,10 +43,19 @@ export async function ensurePlayerProfile(user: User): Promise<void> {
 export async function fetchMyProfile(userId: string): Promise<PlayerProfile | null> {
   const { data } = await supabase
     .from('players')
-    .select('id, handle, display_name, city, elo, level, is_premium')
+    .select('id, handle, display_name, city, play_style, handedness, elo, level, is_premium')
     .eq('id', userId)
     .maybeSingle();
   return (data as PlayerProfile | null) ?? null;
+}
+
+/** Met à jour son propre profil (RLS : auth.uid() = id). */
+export async function updateMyProfile(
+  userId: string,
+  patch: { display_name?: string; city?: string; play_style?: string; handedness?: string },
+): Promise<void> {
+  const { error } = await supabase.from('players').update(patch).eq('id', userId);
+  if (error) throw error;
 }
 
 /** Classement par ELO décroissant. */

@@ -66,14 +66,18 @@ export default function DefisScreen() {
             <View style={styles.list}>
               {filtered.map((p) => (
                 <View key={p.id} style={styles.card}>
-                  <Avatar name={p.display_name} size={48} />
-                  <View style={styles.cardMain}>
-                    <ThemedText type="cardTitle">{p.display_name}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      ELO {p.elo}
-                      {p.city ? ` · ${p.city}` : ''}
-                    </ThemedText>
-                  </View>
+                  <Pressable
+                    style={styles.cardLeft}
+                    onPress={() => router.push({ pathname: '/player', params: { id: p.id } })}>
+                    <Avatar name={p.display_name} size={48} />
+                    <View style={styles.cardMain}>
+                      <ThemedText type="cardTitle">{p.display_name}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        ELO {p.elo}
+                        {p.city ? ` · ${p.city}` : ''}
+                      </ThemedText>
+                    </View>
+                  </Pressable>
                   <Pressable
                     style={styles.defier}
                     onPress={() =>
@@ -135,6 +139,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
+  cardLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   cardMain: { flex: 1 },
   defier: {
     backgroundColor: Palette.evergreen,

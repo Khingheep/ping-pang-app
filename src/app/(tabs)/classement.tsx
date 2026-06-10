@@ -1,6 +1,6 @@
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -71,7 +71,10 @@ export default function RankingScreen() {
               const rank = i + 4;
               const mine = e.id === myId;
               return (
-                <View key={e.id} style={[styles.row, mine && styles.rowMine]}>
+                <Pressable
+                  key={e.id}
+                  onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}
+                  style={[styles.row, mine && styles.rowMine]}>
                   <ThemedText type="smallBold" themeColor="textSecondary" style={styles.rank}>
                     {rank}
                   </ThemedText>
@@ -87,7 +90,7 @@ export default function RankingScreen() {
                   <ThemedText type="subtitle" themeColor="brand">
                     {e.elo}
                   </ThemedText>
-                </View>
+                </Pressable>
               );
             })}
             {rows.length === 0 ? (
