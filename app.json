@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Ping Pang Paris",
+    "slug": "ping-pang-paris",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "pingpangparis",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#092C25",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "paris.pingpang.app"
+    },
+    "android": {
+      "package": "paris.pingpang.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#092C25",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#092C25",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 120
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
