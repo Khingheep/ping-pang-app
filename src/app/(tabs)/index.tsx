@@ -1,29 +1,165 @@
-import { View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Card, Screen } from '@/components/screen';
+import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
+import { useAuth } from '@/lib/auth/auth-provider';
+import { fetchLeaderboard, fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 
-export default function FeedScreen() {
+const CHART = [40, 58, 46, 70, 52, 86, 48, 100]; // hauteurs % (placeholder)
+
+export default function AccueilScreen() {
+  const { session, signOut } = useAuth();
+  const insets = useSafeAreaInsets();
+  const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [rank, setRank] = useState<number | null>(null);
+
+  useEffect(() => {
+    const id = session?.user?.id;
+    if (!id) return;
+    fetchMyProfile(id).then(setProfile);
+    fetchLeaderboard(200).then((rows) => {
+      const i = rows.findIndex((r) => r.id === id);
+      setRank(i >= 0 ? i + 1 : null);
+    });
+  }, [session?.user?.id]);
+
+  const name = profile?.display_name ?? 'Joueur';
+  const elo = profile?.elo ?? 1200;
+
   return (
-    <Screen title="Feed" subtitle="L'activité du club, en temps réel.">
-      <Card>
-        <ThemedText type="label" themeColor="info">
-          Sprint 2 · 📣 Feed & Social
-        </ThemedText>
-        <ThemedText type="cardTitle">Bientôt ici</ThemedText>
-        <View style={{ gap: Spacing.one, marginTop: Spacing.one }}>
-          <ThemedText type="small" themeColor="textSecondary">
-            • Matchs récents & résultats ELO en direct
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            • Nouveaux membres du club Ping Pang Paris
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            • Défis lancés & relevés
-          </ThemedText>
+    <View style={styles.root}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        {/* Header evergreen */}
+        <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
+          <Avatar name={name} size={72} color={Palette.purple} />
+          <View style={styles.headerText}>
+            <ThemedText type="subtitle" themeColor="onBrand">
+              {name}
+            </ThemedText>
+            <ThemedText type="smallBold" style={{ color: Palette.lime }}>
+              ELO {elo}
+              {rank ? ` · #${rank} France` : ''}
+            </ThemedText>
+          </View>
         </View>
-      </Card>
-    </Screen>
+
+        <View style={styles.content}>
+          {/* Stats */}
+          <View style={styles.statRow}>
+            {[
+              { v: '0', l: 'Matchs' },
+              { v: '0', l: 'Victoires' },
+              { v: '—', l: 'Win %' },
+            ].map((s) => (
+              <View key={s.l} style={styles.statCard}>
+                <ThemedText type="metric" style={styles.statValue}>
+                  {s.v}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {s.l}
+                </ThemedText>
+              </View>
+            ))}
+          </View>
+
+          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+            Progression ELO
+          </ThemedText>
+          <View style={styles.chartCard}>
+            {CHART.map((h, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.bar,
+                  { height: `${h}%`, backgroundColor: i === CHART.length - 1 ? Palette.evergreen : Palette.blue },
+                ]}
+              />
+            ))}
+          </View>
+
+          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+            Derniers matchs
+          </ThemedText>
+          <View style={styles.emptyCard}>
+            <ThemedText type="default" themeColor="textSecondary">
+              Aucun match pour l&apos;instant. Lance un défi pour commencer ! 🏓
+            </ThemedText>
+          </View>
+
+          <Pressable style={styles.settingsRow}>
+            <ThemedText type="cardTitle">Paramètres du compte</ThemedText>
+            <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
+          </Pressable>
+
+          <Pressable style={styles.signOut} onPress={() => signOut()}>
+            <ThemedText type="smallBold" themeColor="danger">
+              Se déconnecter
+            </ThemedText>
+          </Pressable>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: Palette.whitePP },
+  scroll: { paddingBottom: BottomTabInset + Spacing.five },
+  header: {
+    backgroundColor: Palette.evergreen,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingBottom: Spacing.four,
+  },
+  headerText: { flex: 1, gap: Spacing.half },
+  content: { paddingHorizontal: Spacing.four, paddingTop: Spacing.four, gap: Spacing.two },
+  statRow: { flexDirection: 'row', gap: Spacing.two },
+  statCard: {
+    flex: 1,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.three,
+  },
+  statValue: { fontSize: 30, lineHeight: 34 },
+  section: { marginTop: Spacing.four, marginBottom: Spacing.two },
+  chartCard: {
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    height: 160,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: Spacing.two,
+    padding: Spacing.three,
+  },
+  bar: { flex: 1, borderRadius: Radius.xs, minHeight: 8 },
+  emptyCard: {
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.four,
+  },
+  settingsRow: {
+    marginTop: Spacing.four,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.four,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  signOut: { marginTop: Spacing.four, alignItems: 'center', padding: Spacing.three },
+});

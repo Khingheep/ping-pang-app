@@ -2,58 +2,57 @@ import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { StyleSheet } from 'react-native';
 
-import { Colors, Fonts, Palette } from '@/constants/theme';
+import { Fonts, Palette } from '@/constants/theme';
 
-const c = Colors.dark;
-
+// Structure design « Ping Pang Connect » : Défis · Ranking · Accueil(centre) · Map · Train
 export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: c.brand,
-        tabBarInactiveTintColor: c.textSecondary,
+        tabBarActiveTintColor: Palette.evergreen,
+        tabBarInactiveTintColor: Palette.grey,
         tabBarStyle: {
-          backgroundColor: Palette.evergreen,
-          borderTopColor: c.border,
+          backgroundColor: Palette.whitePP,
+          borderTopColor: Palette.border,
           borderTopWidth: StyleSheet.hairlineWidth,
         },
         tabBarLabelStyle: { fontFamily: Fonts.bodySemibold, fontSize: 11 },
-        sceneStyle: { backgroundColor: Palette.evergreen },
+        sceneStyle: { backgroundColor: Palette.whitePP },
       }}>
       <Tabs.Screen
-        name="index"
+        name="jouer"
         options={{
-          title: 'Feed',
-          tabBarIcon: ({ color, size }) => <Ionicons name="pulse" color={color} size={size} />,
+          title: 'Défis',
+          tabBarIcon: ({ color, size }) => <Ionicons name="flash" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="classement"
         options={{
-          title: 'Rank',
+          title: 'Ranking',
           tabBarIcon: ({ color, size }) => <Ionicons name="trophy" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
-        name="jouer"
+        name="index"
         options={{
-          title: 'Jouer',
-          tabBarIcon: ({ color, size }) => <Ionicons name="tennisball" color={color} size={size} />,
+          title: 'Accueil',
+          tabBarIcon: ({ color, size }) => <Ionicons name="home" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="carte"
         options={{
-          title: 'Carte',
+          title: 'Map',
           tabBarIcon: ({ color, size }) => <Ionicons name="map" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
-        name="profil"
+        name="train"
         options={{
-          title: 'Profil',
-          tabBarIcon: ({ color, size }) => <Ionicons name="person" color={color} size={size} />,
+          title: 'Train',
+          tabBarIcon: ({ color, size }) => <Ionicons name="barbell" color={color} size={size} />,
         }}
       />
     </Tabs>

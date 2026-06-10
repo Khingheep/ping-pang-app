@@ -13,6 +13,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+/** True quand EXPO_PUBLIC_SUPABASE_URL + _ANON_KEY sont renseignés (.env). */
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
 export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
   auth: {
     storage: AsyncStorage,

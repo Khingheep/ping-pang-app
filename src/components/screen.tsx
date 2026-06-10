@@ -8,22 +8,16 @@ import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 type ScreenProps = {
   title: string;
   subtitle?: string;
-  eyebrow?: string;
   children?: ReactNode;
 };
 
-/** Gabarit d'écran standard (fond evergreen, header logo + titre, contenu scrollable). */
-export function Screen({ title, subtitle, eyebrow = 'PING PANG · PARIS', children }: ScreenProps) {
+/** Gabarit d'écran standard (fond clair, grand titre, contenu scrollable). */
+export function Screen({ title, subtitle, children }: ScreenProps) {
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <ThemedText type="label" themeColor="brand">
-            {eyebrow}
-          </ThemedText>
-          <ThemedText type="title" style={styles.title}>
-            {title}
-          </ThemedText>
+          <ThemedText type="title">{title}</ThemedText>
           {subtitle ? (
             <ThemedText type="default" themeColor="textSecondary" style={styles.subtitle}>
               {subtitle}
@@ -36,7 +30,7 @@ export function Screen({ title, subtitle, eyebrow = 'PING PANG · PARIS', childr
   );
 }
 
-/** Carte surface élevée (Eugenia : bg blanc 6%, border 12%, radius 16). */
+/** Carte surface (blanc, bordure fine). */
 export function Card({ style, children, ...rest }: ViewProps) {
   return (
     <View style={[styles.card, style]} {...rest}>
@@ -46,21 +40,20 @@ export function Card({ style, children, ...rest }: ViewProps) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Palette.evergreen },
+  root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
   content: {
     paddingHorizontal: Spacing.four,
     paddingTop: Spacing.three,
     paddingBottom: BottomTabInset + Spacing.five,
   },
-  title: { marginTop: Spacing.two },
   subtitle: { marginTop: Spacing.one },
   body: { marginTop: Spacing.four, gap: Spacing.three },
   card: {
-    backgroundColor: 'rgba(245,246,243,0.06)',
-    borderColor: 'rgba(245,246,243,0.12)',
+    backgroundColor: Palette.white,
+    borderColor: Palette.border,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: Radius.md,
+    borderRadius: Radius.sm,
     padding: Spacing.four,
     gap: Spacing.two,
   },

@@ -46,3 +46,8 @@ node_modules
 # local env
 .env
 .env*.local
+
+# figma raw export (keep PNGs, ignore big JSON)
+design/figma/*.json
+
+design/figma/
