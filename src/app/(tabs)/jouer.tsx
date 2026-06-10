@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchOtherPlayers, type LeaderboardEntry } from '@/lib/players/profile';
+import { fetchIncomingChallenges, respondChallenge, type Challenge } from '@/lib/social/challenges';
 
 const CITIES = ['Autour de moi', 'Paris', 'Lyon', 'Bordeaux'];
 
@@ -16,14 +17,26 @@ export default function DefisScreen() {
   const { session } = useAuth();
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [query, setQuery] = useState('');
+  const [challenges, setChallenges] = useState<Challenge[]>([]);
 
   useFocusEffect(
     useCallback(() => {
       const id = session?.user?.id;
       if (!id) return;
       fetchOtherPlayers(id, 100).then(setPlayers);
+      fetchIncomingChallenges(id).then(setChallenges);
     }, [session?.user?.id]),
   );
+
+  async function accept(c: Challenge) {
+    await respondChallenge(c.id, 'accepted').catch(() => {});
+    setChallenges((prev) => prev.filter((x) => x.id !== c.id));
+    router.push({ pathname: '/new-match', params: { opponentId: c.from_player, opponentName: c.from?.display_name ?? 'Joueur' } });
+  }
+  async function decline(c: Challenge) {
+    await respondChallenge(c.id, 'declined').catch(() => {});
+    setChallenges((prev) => prev.filter((x) => x.id !== c.id));
+  }
 
   const filtered = players.filter((p) =>
     p.display_name.toLowerCase().includes(query.trim().toLowerCase()),
@@ -59,6 +72,37 @@ export default function DefisScreen() {
               </View>
             ))}
           </View>
+
+          {challenges.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Défis reçus
+              </ThemedText>
+              <View style={styles.list}>
+                {challenges.map((c) => (
+                  <View key={c.id} style={styles.challengeCard}>
+                    <Avatar name={c.from?.display_name ?? '?'} size={44} />
+                    <View style={styles.cardMain}>
+                      <ThemedText type="cardTitle">{c.from?.display_name ?? 'Joueur'}</ThemedText>
+                      {c.message ? (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {c.message}
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                    <Pressable style={styles.declineBtn} onPress={() => decline(c)}>
+                      <Ionicons name="close" size={18} color={Palette.redInk} />
+                    </Pressable>
+                    <Pressable style={styles.acceptBtn} onPress={() => accept(c)}>
+                      <ThemedText type="smallBold" themeColor="onBrand">
+                        Accepter
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
 
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Joueurs près de toi
@@ -159,6 +203,26 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
   },
   cardLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  challengeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.evergreen,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
+  declineBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+  },
+  acceptBtn: { backgroundColor: Palette.evergreen, borderRadius: Radius.xs, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   cardMain: { flex: 1 },
   defier: {
     backgroundColor: Palette.evergreen,

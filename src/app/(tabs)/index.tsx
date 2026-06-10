@@ -10,6 +10,7 @@ import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
 import { fetchLeaderboard, fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
+import { unreadCount } from '@/lib/social/notifications';
 
 function relativeDate(iso: string): string {
   const d = new Date(iso).getTime();
@@ -27,6 +28,7 @@ export default function AccueilScreen() {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [rank, setRank] = useState<number | null>(null);
   const [matches, setMatches] = useState<MatchView[]>([]);
+  const [unread, setUnread] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -34,6 +36,7 @@ export default function AccueilScreen() {
       if (!id) return;
       fetchMyProfile(id).then(setProfile);
       fetchRecentMatches(id, 50).then(setMatches);
+      unreadCount().then(setUnread);
       fetchLeaderboard(200).then((rows) => {
         const i = rows.findIndex((r) => r.id === id);
         setRank(i >= 0 ? i + 1 : null);
@@ -58,6 +61,15 @@ export default function AccueilScreen() {
               ELO {elo}
               {rank ? ` · #${rank} France` : ''}
             </ThemedText>
+          </View>
+          <View style={styles.headerIcons}>
+            <Pressable onPress={() => router.push('/messages')} hitSlop={10}>
+              <Ionicons name="chatbubble-outline" size={22} color={Palette.whitePP} />
+            </Pressable>
+            <Pressable onPress={() => router.push('/notifications')} hitSlop={10}>
+              <Ionicons name="notifications-outline" size={22} color={Palette.whitePP} />
+              {unread > 0 ? <View style={styles.badge} /> : null}
+            </Pressable>
           </View>
         </View>
 
@@ -130,6 +142,8 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   headerText: { flex: 1, gap: Spacing.half },
+  headerIcons: { flexDirection: 'row', gap: Spacing.three, alignItems: 'center' },
+  badge: { position: 'absolute', top: -2, right: -2, width: 9, height: 9, borderRadius: 5, backgroundColor: Palette.redInk },
   content: { paddingHorizontal: Spacing.four, paddingTop: Spacing.four },
   statRow: { flexDirection: 'row', gap: Spacing.two },
   statCard: {

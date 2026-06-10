@@ -11,7 +11,7 @@ import { AuthProvider, isSupabaseConfigured, useAuth } from '@/lib/auth/auth-pro
 SplashScreen.preventAutoHideAsync();
 
 function RootNavigator() {
-  const { session, loading } = useAuth();
+  const { session, loading, needsOnboarding } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -21,12 +21,15 @@ function RootNavigator() {
     if (!isSupabaseConfigured) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const inOnboarding = segments[0] === 'onboarding';
     if (!session && !inAuthGroup) {
       router.replace('/login');
     } else if (session && inAuthGroup) {
       router.replace('/');
+    } else if (session && needsOnboarding && !inOnboarding) {
+      router.replace('/onboarding');
     }
-  }, [session, loading, segments, router]);
+  }, [session, loading, needsOnboarding, segments, router]);
 
   return (
     <Stack
@@ -40,6 +43,10 @@ function RootNavigator() {
       <Stack.Screen name="settings" />
       <Stack.Screen name="player" />
       <Stack.Screen name="tournoi" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="onboarding" />
+      <Stack.Screen name="messages" />
+      <Stack.Screen name="chat" />
+      <Stack.Screen name="notifications" />
     </Stack>
   );
 }

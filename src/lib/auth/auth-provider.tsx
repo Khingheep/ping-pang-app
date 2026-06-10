@@ -5,7 +5,7 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { ensurePlayerProfile } from '@/lib/players/profile';
+import { ensurePlayerProfile, fetchMyProfile } from '@/lib/players/profile';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase/client';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -20,6 +20,8 @@ type AuthContextValue = {
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  needsOnboarding: boolean;
+  markOnboarded: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -40,6 +42,7 @@ async function createSessionFromUrl(url: string): Promise<Session | null> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   // État de session initial + abonnement aux changements.
   useEffect(() => {
@@ -67,11 +70,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [url]);
 
-  // À la connexion, garantit l'existence du profil joueur (table players).
+  // À la connexion : garantit le profil joueur + détecte si onboarding requis.
   useEffect(() => {
     const user = session?.user;
     if (user) {
-      ensurePlayerProfile(user).catch(() => {});
+      ensurePlayerProfile(user)
+        .then(() => fetchMyProfile(user.id))
+        .then((p) => setNeedsOnboarding(!p?.play_style))
+        .catch(() => {});
+    } else {
+      setNeedsOnboarding(false);
     }
   }, [session?.user?.id]);
 
@@ -104,8 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async signOut() {
         await supabase.auth.signOut();
       },
+      needsOnboarding,
+      markOnboarded() {
+        setNeedsOnboarding(false);
+      },
     }),
-    [session, loading],
+    [session, loading, needsOnboarding],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
