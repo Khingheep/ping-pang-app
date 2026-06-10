@@ -9,6 +9,8 @@ export type PlayerProfile = {
   city: string | null;
   play_style: string | null;
   handedness: string | null;
+  fftt_id: string | null;
+  fftt_points: number | null;
   elo: number;
   level: string;
   is_premium: boolean;
@@ -43,7 +45,7 @@ export async function ensurePlayerProfile(user: User): Promise<void> {
 export async function fetchMyProfile(userId: string): Promise<PlayerProfile | null> {
   const { data } = await supabase
     .from('players')
-    .select('id, handle, display_name, city, play_style, handedness, elo, level, is_premium')
+    .select('id, handle, display_name, city, play_style, handedness, fftt_id, fftt_points, elo, level, is_premium')
     .eq('id', userId)
     .maybeSingle();
   return (data as PlayerProfile | null) ?? null;

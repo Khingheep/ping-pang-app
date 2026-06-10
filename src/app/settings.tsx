@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { fetchFfttByLicence, linkFfttToProfile } from '@/lib/fftt/link';
 import { fetchMyProfile, updateMyProfile } from '@/lib/players/profile';
 
 const STYLES = ['Offensif', 'Défensif', 'Allround'];
@@ -18,6 +19,7 @@ export default function SettingsScreen() {
   const [city, setCity] = useState('');
   const [playStyle, setPlayStyle] = useState<string | null>(null);
   const [hand, setHand] = useState<string | null>(null);
+  const [ffttPoints, setFfttPoints] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -27,8 +29,40 @@ export default function SettingsScreen() {
       if (!p) return;
       setDisplayName(p.display_name);
       setCity(p.city ?? '');
+      setFfttPoints(p.fftt_points);
     });
   }, [session?.user?.id]);
+
+  function onLinkFftt() {
+    if (typeof Alert.prompt !== 'function') {
+      Alert.alert('iOS', 'La liaison FFTT par licence est disponible sur iOS.');
+      return;
+    }
+    Alert.prompt(
+      'Lier mon compte FFTT',
+      'Entre ton numéro de licence FFTT',
+      async (lic?: string) => {
+        const licence = (lic ?? '').trim();
+        const id = session?.user?.id;
+        if (!licence || !id) return;
+        try {
+          const d = await fetchFfttByLicence(licence);
+          if (!d) {
+            Alert.alert('Introuvable', 'Aucun joueur FFTT pour cette licence.');
+            return;
+          }
+          const pts = await linkFfttToProfile(id, d);
+          setFfttPoints(pts);
+          Alert.alert('FFTT lié ✅', `${d.prenom ?? ''} ${d.nom ?? ''} — ${pts ?? '—'} pts officiels`);
+        } catch (e) {
+          Alert.alert('FFTT', e instanceof Error ? e.message : 'Erreur');
+        }
+      },
+      'plain-text',
+      '',
+      'number-pad',
+    );
+  }
 
   async function save() {
     const id = session?.user?.id;
@@ -108,10 +142,10 @@ export default function SettingsScreen() {
             )}
           </Pressable>
 
-          <Pressable style={styles.linkRow}>
+          <Pressable style={styles.linkRow} onPress={onLinkFftt}>
             <ThemedText type="cardTitle">Lier mon compte FFTT</ThemedText>
-            <ThemedText type="small" themeColor="textMuted">
-              Bientôt
+            <ThemedText type="smallBold" themeColor={ffttPoints ? 'brand' : 'textMuted'}>
+              {ffttPoints ? `${ffttPoints} pts` : 'Lier'}
             </ThemedText>
           </Pressable>
 
