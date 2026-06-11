@@ -8,7 +8,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export function useTheme() {
   const scheme = useColorScheme();
-  const theme = scheme === 'unspecified' ? 'light' : scheme;
-
-  return Colors[theme];
+  // App dark-first ? Non : light-first. Les 2 schémas mappent le même thème,
+  // donc tout sauf 'dark' (incl. null/undefined) → light.
+  return Colors[scheme === 'dark' ? 'dark' : 'light'];
 }
