@@ -1,11 +1,13 @@
+import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { coachUrl, fetchCoaches, type Coach } from '@/lib/podplay/coaches';
 import {
   addTrainingSession,
   fetchTrainingSessions,
@@ -30,10 +32,12 @@ export default function TrainScreen() {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [coaches, setCoaches] = useState<Coach[]>([]);
 
   const load = useCallback(() => {
     const id = session?.user?.id;
     if (id) fetchTrainingSessions(id).then(setSessions);
+    fetchCoaches().then(setCoaches);
   }, [session?.user?.id]);
 
   useFocusEffect(load);
@@ -127,6 +131,34 @@ export default function TrainScreen() {
               )}
             </Pressable>
           </View>
+
+          {coaches.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Coachs du club
+              </ThemedText>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.coachRow}>
+                {coaches.map((c) => (
+                  <Pressable
+                    key={c.id}
+                    style={styles.coachCard}
+                    onPress={() => c.slug && Linking.openURL(coachUrl(c.slug))}>
+                    {c.picture_url ? (
+                      <Image source={{ uri: c.picture_url }} style={styles.coachPic} contentFit="cover" />
+                    ) : (
+                      <View style={[styles.coachPic, styles.coachPicEmpty]} />
+                    )}
+                    <ThemedText type="smallBold" numberOfLines={1} style={styles.coachName}>
+                      {c.first_name} {c.last_name}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {c.hourly_rate}€/h
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </>
+          ) : null}
 
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Historique
@@ -224,6 +256,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
+  coachRow: { gap: Spacing.three, paddingVertical: Spacing.one, paddingRight: Spacing.four },
+  coachCard: { width: 96, alignItems: 'center', gap: Spacing.half },
+  coachPic: { width: 96, height: 96, borderRadius: Radius.md, backgroundColor: Palette.white },
+  coachPicEmpty: { borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  coachName: { marginTop: Spacing.one, textAlign: 'center' },
   histRow: {
     flexDirection: 'row',
     alignItems: 'center',
