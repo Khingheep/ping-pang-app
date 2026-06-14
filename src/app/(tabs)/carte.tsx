@@ -1,24 +1,61 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { fetchEvents, fetchVenues, type EventPP, type Venue } from '@/lib/venues/venues';
 
 const FILTERS = ['Tout', 'Intérieur', 'Extérieur'];
+const MAP_HEIGHT = 300;
+const PARIS = { lat: 48.8566, lng: 2.3522 };
 
 function eventDate(iso: string | null): string {
   if (!iso) return '';
   return new Date(iso).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+/** Carte Leaflet (OpenStreetMap) rendue dans une WebView — fonctionne dans Expo Go, sans clé ni dev build. */
+function mapHtml(venues: Venue[]): string {
+  const points = venues
+    .filter((v) => v.lat != null && v.lng != null)
+    .map((v) => ({ id: v.id, lat: v.lat, lng: v.lng, name: v.name, address: v.address ?? '', indoor: !!v.indoor }));
+  const data = JSON.stringify(points).replace(/</g, '\\u003c');
+  return `<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  html,body,#map{height:100%;margin:0;padding:0;background:${Palette.whitePP}}
+  .leaflet-popup-content{font-family:-apple-system,system-ui,sans-serif;font-size:13px;margin:10px 12px}
+  .leaflet-popup-content b{color:${Palette.evergreen}}
+  .leaflet-control-attribution{font-size:9px;opacity:.5}
+</style></head><body><div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  var map = L.map('map',{zoomControl:false,attributionControl:true}).setView([${PARIS.lat},${PARIS.lng}],12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  var pts = ${data};
+  var markers = {}, bounds = [];
+  pts.forEach(function(p){
+    var m = L.circleMarker([p.lat,p.lng],{radius:9,weight:2,color:'${Palette.evergreen}',
+      fillColor:p.indoor?'${Palette.blue}':'${Palette.lime}',fillOpacity:1}).addTo(map);
+    m.bindPopup('<b>'+p.name+'</b>'+(p.address?'<br>'+p.address:''));
+    m.on('click',function(){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(p.id); });
+    markers[p.id]=m; bounds.push([p.lat,p.lng]);
+  });
+  if(bounds.length) map.fitBounds(bounds,{padding:[36,36],maxZoom:14});
+  window.__focus=function(id){ var m=markers[id]; if(m){ map.flyTo(m.getLatLng(),15,{duration:.6}); m.openPopup(); } };
+</script></body></html>`;
+}
+
 export default function CarteScreen() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [events, setEvents] = useState<EventPP[]>([]);
   const [filter, setFilter] = useState(0);
+  const webRef = useRef<WebView>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -27,19 +64,40 @@ export default function CarteScreen() {
     }, []),
   );
 
-  const filtered = venues.filter((v) =>
-    filter === 0 ? true : filter === 1 ? v.indoor : v.indoor === false,
-  );
+  // La map affiche tous les lieux ; le filtre n'agit que sur la liste (évite de recharger la WebView).
+  const html = useMemo(() => mapHtml(venues), [venues]);
+  const filtered = venues.filter((v) => (filter === 0 ? true : filter === 1 ? v.indoor : v.indoor === false));
+
+  const focusVenue = useCallback((v: Venue) => {
+    if (v.lat == null || v.lng == null) return;
+    webRef.current?.injectJavaScript(`window.__focus(${JSON.stringify(v.id)});true;`);
+  }, []);
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <View style={styles.header}>
           <ThemedText type="title">Carte</ThemedText>
           <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
             Trouve une table près de toi.
           </ThemedText>
+        </View>
 
+        <View style={styles.mapWrap}>
+          <WebView
+            ref={webRef}
+            originWhitelist={['*']}
+            source={{ html }}
+            style={styles.map}
+            scrollEnabled={false}
+            onMessage={() => {}}
+            startInLoadingState
+            javaScriptEnabled
+            domStorageEnabled
+          />
+        </View>
+
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <View style={styles.filters}>
             {FILTERS.map((f, i) => (
               <PressablePill key={f} active={filter === i} label={f} onPress={() => setFilter(i)} />
@@ -48,7 +106,7 @@ export default function CarteScreen() {
 
           <View style={styles.list}>
             {filtered.map((v) => (
-              <View key={v.id} style={styles.venueCard}>
+              <Pressable key={v.id} style={styles.venueCard} onPress={() => focusVenue(v)}>
                 <View style={[styles.pin, { backgroundColor: v.indoor ? Palette.blue : Palette.lime }]}>
                   <Ionicons name={v.indoor ? 'home' : 'sunny'} size={18} color={Palette.onyx} />
                 </View>
@@ -60,10 +118,8 @@ export default function CarteScreen() {
                     </ThemedText>
                   ) : null}
                 </View>
-                <ThemedText type="small" themeColor="textMuted">
-                  {v.indoor ? 'Intérieur' : 'Extérieur'}
-                </ThemedText>
-              </View>
+                <Ionicons name="chevron-forward" size={16} color={Palette.grey} />
+              </Pressable>
             ))}
             {filtered.length === 0 ? (
               <ThemedText type="small" themeColor="textMuted">
@@ -119,8 +175,19 @@ function PressablePill({ active, label, onPress }: { active: boolean; label: str
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
-  scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
+  header: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three },
   sub: { marginTop: Spacing.one, marginBottom: Spacing.three },
+  mapWrap: {
+    height: MAP_HEIGHT,
+    marginHorizontal: Spacing.four,
+    borderRadius: Radius.md,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    backgroundColor: Palette.whitePP,
+  },
+  map: { flex: 1, backgroundColor: Palette.whitePP },
+  scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.four, paddingBottom: BottomTabInset + Spacing.five },
   filters: { flexDirection: 'row', gap: Spacing.two, marginBottom: Spacing.four },
   pill: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
   pillActive: { backgroundColor: Palette.evergreen },

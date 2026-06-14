@@ -5,6 +5,8 @@ export type Venue = {
   name: string;
   address: string | null;
   indoor: boolean | null;
+  lat: number | null;
+  lng: number | null;
 };
 
 export type EventPP = {
@@ -16,7 +18,7 @@ export type EventPP = {
 };
 
 export async function fetchVenues(): Promise<Venue[]> {
-  const { data } = await supabase.from('venues').select('id, name, address, indoor').order('name');
+  const { data } = await supabase.from('venues').select('id, name, address, indoor, lat, lng').order('name');
   return (data as Venue[] | null) ?? [];
 }
 
