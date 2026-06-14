@@ -6,6 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { ensurePlayerProfile, fetchMyProfile } from '@/lib/players/profile';
+import { registerForPush } from '@/lib/push/register';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase/client';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -75,7 +76,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const user = session?.user;
     if (user) {
       ensurePlayerProfile(user)
-        .then(() => fetchMyProfile(user.id))
+        .then(() => {
+          registerForPush(user.id).catch(() => {}); // no-op sur Expo Go
+          return fetchMyProfile(user.id);
+        })
         .then((p) => setNeedsOnboarding(!p?.play_style))
         .catch(() => {});
     } else {
