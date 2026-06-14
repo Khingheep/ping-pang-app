@@ -18,7 +18,12 @@ export type EventPP = {
 };
 
 export async function fetchVenues(): Promise<Venue[]> {
-  const { data } = await supabase.from('venues').select('id, name, address, indoor, lat, lng').order('name');
+  // 'manuel' avant 'openstreetmap' → les lieux curatés (dont le club) en tête de liste.
+  const { data } = await supabase
+    .from('venues')
+    .select('id, name, address, indoor, lat, lng')
+    .order('source', { ascending: true })
+    .order('name', { ascending: true });
   return (data as Venue[] | null) ?? [];
 }
 
