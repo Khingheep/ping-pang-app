@@ -104,8 +104,9 @@ export default function AccueilScreen() {
               {name}
             </ThemedText>
             <ThemedText type="smallBold" style={{ color: Palette.lime }}>
-              ELO {elo}
-              {rank ? ` · #${rank} France` : ''}
+              {elo} pts
+              {rank ? ` · #${rank}` : ''}
+              {(profile?.glicko_rd ?? 0) > 200 ? ' · provisoire' : ''}
             </ThemedText>
           </View>
           <View style={styles.headerIcons}>

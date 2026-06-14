@@ -12,6 +12,7 @@ export type PlayerProfile = {
   fftt_id: string | null;
   fftt_points: number | null;
   elo: number;
+  glicko_rd: number | null; // incertitude Glicko-2 (RD élevé = classement provisoire)
   level: string;
   is_premium: boolean;
 };
@@ -45,7 +46,7 @@ export async function ensurePlayerProfile(user: User): Promise<void> {
 export async function fetchMyProfile(userId: string): Promise<PlayerProfile | null> {
   const { data } = await supabase
     .from('players')
-    .select('id, handle, display_name, city, play_style, handedness, fftt_id, fftt_points, elo, level, is_premium')
+    .select('id, handle, display_name, city, play_style, handedness, fftt_id, fftt_points, elo, glicko_rd, level, is_premium')
     .eq('id', userId)
     .maybeSingle();
   return (data as PlayerProfile | null) ?? null;
@@ -65,7 +66,14 @@ export async function updateMyProfile(
     level?: string;
   },
 ): Promise<void> {
-  const { error } = await supabase.from('players').update(patch).eq('id', userId);
+  // Quand on fixe l'ELO (lien FFTT à l'onboarding), on aligne le rating Glicko pour éviter
+  // une discontinuité au 1er match. Un classement FFTT est un prior fiable → RD plus bas.
+  const finalPatch: Record<string, unknown> = { ...patch };
+  if (patch.elo !== undefined) {
+    finalPatch.glicko_rating = patch.elo;
+    if (patch.fftt_points != null) finalPatch.glicko_rd = 100;
+  }
+  const { error } = await supabase.from('players').update(finalPatch).eq('id', userId);
   if (error) throw error;
 }
 
