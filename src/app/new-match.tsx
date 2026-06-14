@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
-import { recordMatch } from '@/lib/matches/record';
+import { proposeMatch } from '@/lib/matches/confirm';
 
 const FEELINGS = ['💪', '🔥', '😅', '😐', '😩'];
 const BEST_OF = [3, 5, 7];
@@ -47,10 +47,12 @@ export default function NewMatchScreen() {
     }
     try {
       setBusy(true);
-      const r = await recordMatch({ opponentId, mySets, oppSets, bestOf, feeling });
+      const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling });
+      const sign = r.preview_delta > 0 ? '+' : '';
       Alert.alert(
-        r.won ? 'Victoire ! 🎉' : 'Défaite',
-        `${r.delta_me > 0 ? '+' : ''}${r.delta_me} ELO`,
+        'Match envoyé 📨',
+        `En attente de la confirmation de ${opponentName ?? 'ton adversaire'}.\n` +
+          `Une fois validé : ${sign}${r.preview_delta} ELO (estimation).`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } catch (e) {
@@ -138,7 +140,7 @@ export default function NewMatchScreen() {
             <ActivityIndicator color={Palette.whitePP} />
           ) : (
             <ThemedText type="cardTitle" themeColor="onBrand">
-              Valider le match
+              Envoyer pour confirmation
             </ThemedText>
           )}
         </Pressable>

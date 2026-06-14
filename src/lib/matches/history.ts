@@ -1,5 +1,7 @@
 import { supabase } from '@/lib/supabase/client';
 
+export type MatchStatus = 'pending' | 'confirmed' | 'disputed';
+
 export type MatchView = {
   id: string;
   opponent: string;
@@ -8,6 +10,8 @@ export type MatchView = {
   delta: number;
   ranked: boolean;
   date: string;
+  status: MatchStatus;
+  iProposed: boolean; // flux de confirmation : player_a = proposeur
 };
 
 export type PlayerStats = {
@@ -25,6 +29,7 @@ type Row = {
   is_ranked: boolean;
   elo_delta_a: number | null;
   elo_delta_b: number | null;
+  status: MatchStatus | null;
   played_at: string;
   a: { display_name: string } | null;
   b: { display_name: string } | null;
@@ -35,7 +40,7 @@ export async function fetchRecentMatches(userId: string, limit = 50): Promise<Ma
   const { data } = await supabase
     .from('matches')
     .select(
-      'id, player_a, player_b, score, winner, is_ranked, elo_delta_a, elo_delta_b, played_at, a:player_a(display_name), b:player_b(display_name)',
+      'id, player_a, player_b, score, winner, is_ranked, elo_delta_a, elo_delta_b, status, played_at, a:player_a(display_name), b:player_b(display_name)',
     )
     .order('played_at', { ascending: false })
     .limit(limit);
@@ -51,12 +56,23 @@ export async function fetchRecentMatches(userId: string, limit = 50): Promise<Ma
       const [x, y] = score.split('-');
       score = `${y}-${x}`;
     }
-    return { id: r.id, opponent, score, won, delta, ranked: r.is_ranked, date: r.played_at };
+    return {
+      id: r.id,
+      opponent,
+      score,
+      won,
+      delta,
+      ranked: r.is_ranked,
+      date: r.played_at,
+      status: r.status ?? 'confirmed',
+      iProposed: iAmA,
+    };
   });
 }
 
 export function computeStats(matches: MatchView[]): PlayerStats {
-  const ranked = matches.filter((m) => m.ranked);
+  // Seuls les matchs classés CONFIRMÉS comptent dans les stats.
+  const ranked = matches.filter((m) => m.ranked && m.status === 'confirmed');
   const total = ranked.length;
   const wins = ranked.filter((m) => m.won).length;
   return { total, wins, winPct: total > 0 ? Math.round((wins / total) * 100) : null };

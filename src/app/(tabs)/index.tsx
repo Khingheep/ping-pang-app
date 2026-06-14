@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { confirmMatch, disputeMatch, fetchPendingToConfirm, type PendingMatch } from '@/lib/matches/confirm';
 import { computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
 import { fetchLeaderboard, fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 import { unreadCount } from '@/lib/social/notifications';
@@ -28,25 +29,67 @@ export default function AccueilScreen() {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [rank, setRank] = useState<number | null>(null);
   const [matches, setMatches] = useState<MatchView[]>([]);
+  const [pending, setPending] = useState<PendingMatch[]>([]);
   const [unread, setUnread] = useState(0);
+  const [actingId, setActingId] = useState<string | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      const id = session?.user?.id;
-      if (!id) return;
-      fetchMyProfile(id).then(setProfile);
-      fetchRecentMatches(id, 50).then(setMatches);
-      unreadCount().then(setUnread);
-      fetchLeaderboard(200).then((rows) => {
-        const i = rows.findIndex((r) => r.id === id);
-        setRank(i >= 0 ? i + 1 : null);
-      });
-    }, [session?.user?.id]),
-  );
+  const load = useCallback(() => {
+    const id = session?.user?.id;
+    if (!id) return;
+    fetchMyProfile(id).then(setProfile);
+    fetchRecentMatches(id, 50).then(setMatches);
+    fetchPendingToConfirm(id).then(setPending);
+    unreadCount().then(setUnread);
+    fetchLeaderboard(200).then((rows) => {
+      const i = rows.findIndex((r) => r.id === id);
+      setRank(i >= 0 ? i + 1 : null);
+    });
+  }, [session?.user?.id]);
+
+  useFocusEffect(load);
+
+  async function onConfirm(m: PendingMatch) {
+    try {
+      setActingId(m.id);
+      const r = await confirmMatch(m.id);
+      load();
+      Alert.alert(
+        r.won ? 'Match confirmé — Victoire ! 🎉' : 'Match confirmé',
+        r.delta_me ? `${r.delta_me > 0 ? '+' : ''}${r.delta_me} ELO` : 'Match amical enregistré.',
+      );
+    } catch (e) {
+      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  function onDispute(m: PendingMatch) {
+    Alert.alert('Contester le score ?', `Le match contre ${m.proposerName} sera marqué comme contesté (aucun ELO).`, [
+      { text: 'Annuler', style: 'cancel' },
+      {
+        text: 'Contester',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setActingId(m.id);
+            await disputeMatch(m.id);
+            load();
+          } catch (e) {
+            Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+          } finally {
+            setActingId(null);
+          }
+        },
+      },
+    ]);
+  }
 
   const name = profile?.display_name ?? 'Joueur';
   const elo = profile?.elo ?? 1200;
   const stats = computeStats(matches);
+  // Les matchs en attente de MA confirmation sont déjà dans la section « À confirmer ».
+  const recent = matches.filter((m) => !(m.status === 'pending' && !m.iProposed));
 
   return (
     <View style={styles.root}>
@@ -91,10 +134,55 @@ export default function AccueilScreen() {
             ))}
           </View>
 
+          {pending.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                À confirmer
+              </ThemedText>
+              <View style={{ gap: Spacing.two }}>
+                {pending.map((m) => (
+                  <View key={m.id} style={styles.confirmCard}>
+                    <View style={styles.confirmTop}>
+                      <Avatar name={m.proposerName} size={40} color={Palette.blue} />
+                      <View style={{ flex: 1 }}>
+                        <ThemedText type="cardTitle">{m.proposerName} a saisi un match</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {m.isRanked ? 'Classé' : 'Amical'} · Bo{m.bestOf} · ton score {m.myScore}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <View style={styles.confirmActions}>
+                      <Pressable
+                        style={[styles.cBtn, styles.cDispute]}
+                        disabled={actingId === m.id}
+                        onPress={() => onDispute(m)}>
+                        <ThemedText type="smallBold" themeColor="text">
+                          Contester
+                        </ThemedText>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.cBtn, styles.cConfirm]}
+                        disabled={actingId === m.id}
+                        onPress={() => onConfirm(m)}>
+                        {actingId === m.id ? (
+                          <ActivityIndicator color={Palette.whitePP} size="small" />
+                        ) : (
+                          <ThemedText type="smallBold" themeColor="onBrand">
+                            Confirmer {m.myScore}
+                          </ThemedText>
+                        )}
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
+
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Derniers matchs
           </ThemedText>
-          {matches.length === 0 ? (
+          {recent.length === 0 ? (
             <View style={styles.card}>
               <ThemedText type="default" themeColor="textSecondary">
                 Aucun match pour l&apos;instant. Va dans Défis pour lancer ton premier match ! 🏓
@@ -102,21 +190,28 @@ export default function AccueilScreen() {
             </View>
           ) : (
             <View style={{ gap: Spacing.two }}>
-              {matches.slice(0, 8).map((m) => (
-                <View key={m.id} style={styles.matchCard}>
-                  <View style={[styles.matchBar, { backgroundColor: m.won ? Palette.green : Palette.red }]} />
-                  <View style={styles.matchMain}>
-                    <ThemedText type="cardTitle">vs {m.opponent}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {m.ranked ? 'Classé' : 'Amical'} · {relativeDate(m.date)}
-                      {m.delta ? ` · ${m.delta > 0 ? '+' : ''}${m.delta} ELO` : ''}
+              {recent.slice(0, 8).map((m) => {
+                const barColor =
+                  m.status === 'pending' ? Palette.grey : m.status === 'disputed' ? Palette.red : m.won ? Palette.green : Palette.red;
+                return (
+                  <View key={m.id} style={styles.matchCard}>
+                    <View style={[styles.matchBar, { backgroundColor: barColor }]} />
+                    <View style={styles.matchMain}>
+                      <ThemedText type="cardTitle">vs {m.opponent}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {m.status === 'pending'
+                          ? `${m.ranked ? 'Classé' : 'Amical'} · En attente de confirmation ⏳`
+                          : m.status === 'disputed'
+                            ? `${m.ranked ? 'Classé' : 'Amical'} · Contesté ⚠️`
+                            : `${m.ranked ? 'Classé' : 'Amical'} · ${relativeDate(m.date)}${m.delta ? ` · ${m.delta > 0 ? '+' : ''}${m.delta} ELO` : ''}`}
+                      </ThemedText>
+                    </View>
+                    <ThemedText type="subtitle" themeColor={m.status === 'confirmed' && m.won ? 'brand' : 'textMuted'}>
+                      {m.score}
                     </ThemedText>
                   </View>
-                  <ThemedText type="subtitle" themeColor={m.won ? 'brand' : 'textMuted'}>
-                    {m.score}
-                  </ThemedText>
-                </View>
-              ))}
+                );
+              })}
             </View>
           )}
 
@@ -178,6 +273,19 @@ const styles = StyleSheet.create({
   },
   matchBar: { width: 5, alignSelf: 'stretch', borderTopLeftRadius: Radius.sm, borderBottomLeftRadius: Radius.sm },
   matchMain: { flex: 1, paddingLeft: Spacing.one },
+  confirmCard: {
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.blue,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+    gap: Spacing.three,
+  },
+  confirmTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  confirmActions: { flexDirection: 'row', gap: Spacing.two },
+  cBtn: { flex: 1, height: 44, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center' },
+  cDispute: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  cConfirm: { backgroundColor: Palette.evergreen },
   settingsRow: {
     marginTop: Spacing.four,
     backgroundColor: Palette.white,

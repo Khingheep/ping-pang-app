@@ -12,6 +12,9 @@ const ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   challenge: 'flash',
   message: 'chatbubble',
   match: 'tennisball',
+  match_confirm: 'help-circle',
+  match_confirmed: 'checkmark-circle',
+  match_disputed: 'alert-circle',
 };
 
 function rel(iso: string): string {
