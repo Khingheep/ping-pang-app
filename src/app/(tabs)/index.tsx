@@ -8,6 +8,7 @@ import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { fetchFeed, type FeedEvent } from '@/lib/feed/feed';
 import { confirmMatch, disputeMatch, fetchPendingToConfirm, type PendingMatch } from '@/lib/matches/confirm';
 import { computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
 import { fetchLeaderboard, fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
@@ -30,6 +31,7 @@ export default function AccueilScreen() {
   const [rank, setRank] = useState<number | null>(null);
   const [matches, setMatches] = useState<MatchView[]>([]);
   const [pending, setPending] = useState<PendingMatch[]>([]);
+  const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [unread, setUnread] = useState(0);
   const [actingId, setActingId] = useState<string | null>(null);
 
@@ -39,6 +41,7 @@ export default function AccueilScreen() {
     fetchMyProfile(id).then(setProfile);
     fetchRecentMatches(id, 50).then(setMatches);
     fetchPendingToConfirm(id).then(setPending);
+    fetchFeed(20).then(setFeed);
     unreadCount().then(setUnread);
     fetchLeaderboard(200).then((rows) => {
       const i = rows.findIndex((r) => r.id === id);
@@ -215,6 +218,44 @@ export default function AccueilScreen() {
             </View>
           )}
 
+          {feed.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Activité du club
+              </ThemedText>
+              <View style={{ gap: Spacing.two }}>
+                {feed.map((f) => (
+                  <View key={f.id} style={styles.feedRow}>
+                    {f.type === 'newcomer' ? (
+                      <View style={[styles.feedIcon, { backgroundColor: Palette.lime }]}>
+                        <Ionicons name="person-add" size={16} color={Palette.evergreen} />
+                      </View>
+                    ) : (
+                      <Avatar name={f.actorName ?? '?'} size={36} color={Palette.purple} />
+                    )}
+                    <View style={styles.feedMain}>
+                      <ThemedText type="cardTitle" numberOfLines={1}>
+                        {f.title}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {f.body ? `${f.body} · ` : ''}
+                        {relativeDate(f.createdAt)}
+                      </ThemedText>
+                    </View>
+                    {f.eloDelta ? (
+                      <View style={[styles.deltaChip, { backgroundColor: f.eloDelta > 0 ? Palette.lime : Palette.whitePP }]}>
+                        <ThemedText type="smallBold" themeColor={f.eloDelta > 0 ? 'brand' : 'textMuted'}>
+                          {f.eloDelta > 0 ? '+' : ''}
+                          {f.eloDelta}
+                        </ThemedText>
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
+
           <Pressable style={styles.settingsRow} onPress={() => router.push('/settings')}>
             <ThemedText type="cardTitle">Paramètres du compte</ThemedText>
             <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
@@ -286,6 +327,19 @@ const styles = StyleSheet.create({
   cBtn: { flex: 1, height: 44, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center' },
   cDispute: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   cConfirm: { backgroundColor: Palette.evergreen },
+  feedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
+  feedIcon: { width: 36, height: 36, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
+  feedMain: { flex: 1 },
+  deltaChip: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
   settingsRow: {
     marginTop: Spacing.four,
     backgroundColor: Palette.white,
