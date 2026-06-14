@@ -30,6 +30,12 @@
       "expo-router",
       "expo-font",
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Ping Pang utilise ta position pour trouver des joueurs et des tables près de toi."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#F5F6F3",

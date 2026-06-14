@@ -40,3 +40,8 @@ export type Level = (typeof LEVELS)[number];
 export function levelForElo(elo: number): Level {
   return [...LEVELS].reverse().find((l) => elo >= l.min) ?? LEVELS[0];
 }
+
+/** ELO de départ estimé à partir des points officiels FFTT (~500-4500 → ~1125-2125). */
+export function ffttPointsToElo(points: number): number {
+  return Math.min(2600, Math.max(800, Math.round(1000 + points / 4)));
+}

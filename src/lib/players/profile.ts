@@ -54,7 +54,16 @@ export async function fetchMyProfile(userId: string): Promise<PlayerProfile | nu
 /** Met à jour son propre profil (RLS : auth.uid() = id). */
 export async function updateMyProfile(
   userId: string,
-  patch: { display_name?: string; city?: string; play_style?: string; handedness?: string },
+  patch: {
+    display_name?: string;
+    city?: string;
+    play_style?: string;
+    handedness?: string;
+    fftt_id?: string;
+    fftt_points?: number | null;
+    elo?: number;
+    level?: string;
+  },
 ): Promise<void> {
   const { error } = await supabase.from('players').update(patch).eq('id', userId);
   if (error) throw error;
