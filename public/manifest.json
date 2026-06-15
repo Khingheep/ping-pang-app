@@ -1,0 +1,17 @@
+{
+  "name": "Ping Pang Paris",
+  "short_name": "Ping Pang",
+  "description": "Le club de ping-pong de Paris — matchs, classement Glicko, défis et tables près de toi.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "fr",
+  "background_color": "#F5F6F3",
+  "theme_color": "#092C25",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

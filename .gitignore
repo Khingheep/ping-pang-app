@@ -51,3 +51,4 @@ node_modules
 design/figma/*.json
 
 design/figma/
+dist-web/

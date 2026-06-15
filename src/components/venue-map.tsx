@@ -1,0 +1,35 @@
+import { forwardRef, useImperativeHandle, useMemo, useRef } from 'react';
+import { StyleSheet } from 'react-native';
+import { WebView } from 'react-native-webview';
+
+import { Palette } from '@/constants/theme';
+import type { Venue } from '@/lib/venues/venues';
+import { mapHtml } from './venue-map-html';
+
+export type VenueMapHandle = { focus: (id: string) => void };
+
+/** Carte (natif) : Leaflet rendu dans un react-native-webview. */
+export const VenueMap = forwardRef<VenueMapHandle, { venues: Venue[] }>(function VenueMap({ venues }, ref) {
+  const webRef = useRef<WebView>(null);
+  const html = useMemo(() => mapHtml(venues), [venues]);
+
+  useImperativeHandle(ref, () => ({
+    focus: (id) => webRef.current?.injectJavaScript(`window.__focus(${JSON.stringify(id)});true;`),
+  }));
+
+  return (
+    <WebView
+      ref={webRef}
+      originWhitelist={['*']}
+      source={{ html }}
+      style={styles.map}
+      scrollEnabled={false}
+      onMessage={() => {}}
+      startInLoadingState
+      javaScriptEnabled
+      domStorageEnabled
+    />
+  );
+});
+
+const styles = StyleSheet.create({ map: { flex: 1, backgroundColor: Palette.whitePP } });
