@@ -9,14 +9,30 @@ import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchOtherPlayers, type LeaderboardEntry } from '@/lib/players/profile';
-import { fetchIncomingChallenges, respondChallenge, type Challenge } from '@/lib/social/challenges';
+import {
+  fetchIncomingChallenges,
+  fetchRecentOpponents,
+  respondChallenge,
+  type Challenge,
+  type RecentOpponent,
+} from '@/lib/social/challenges';
 
 const CITIES = ['Autour de moi', 'Paris', 'Lyon', 'Bordeaux'];
+
+function cityMatches(city: string | null, filter: number): boolean {
+  if (filter === 0) return true;
+  const c = (city ?? '').toLowerCase();
+  if (filter === 1) return c.includes('paris');
+  if (filter === 2) return c.includes('lyon');
+  return c.includes('bordeaux');
+}
 
 export default function DefisScreen() {
   const { session } = useAuth();
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
+  const [recent, setRecent] = useState<RecentOpponent[]>([]);
   const [query, setQuery] = useState('');
+  const [city, setCity] = useState(0);
   const [challenges, setChallenges] = useState<Challenge[]>([]);
 
   useFocusEffect(
@@ -25,8 +41,17 @@ export default function DefisScreen() {
       if (!id) return;
       fetchOtherPlayers(id, 100).then(setPlayers);
       fetchIncomingChallenges(id).then(setChallenges);
+      fetchRecentOpponents(id, 6).then(setRecent);
     }, [session?.user?.id]),
   );
+
+  function goChallenge(p: { id: string; name: string; elo: number; city: string | null }) {
+    router.push({
+      pathname: '/challenge',
+      params: { opponentId: p.id, opponentName: p.name, opponentElo: String(p.elo), opponentCity: p.city ?? '' },
+    });
+  }
+  const goProfile = (id: string) => router.push({ pathname: '/player', params: { id } });
 
   async function accept(c: Challenge) {
     await respondChallenge(c.id, 'accepted').catch(() => {});
@@ -38,9 +63,8 @@ export default function DefisScreen() {
     setChallenges((prev) => prev.filter((x) => x.id !== c.id));
   }
 
-  const filtered = players.filter((p) =>
-    p.display_name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const q = query.trim().toLowerCase();
+  const filtered = players.filter((p) => p.display_name.toLowerCase().includes(q) && cityMatches(p.city, city));
 
   return (
     <View style={styles.root}>
@@ -64,12 +88,15 @@ export default function DefisScreen() {
           />
 
           <View style={styles.cities}>
-            {CITIES.map((c, i) => (
-              <View key={c} style={[styles.cityPill, i === 0 ? styles.cityActive : styles.cityIdle]}>
-                <ThemedText type="smallBold" themeColor={i === 0 ? 'onBrand' : 'text'}>
-                  {c}
+            {CITIES.map((cLabel, i) => (
+              <Pressable
+                key={cLabel}
+                onPress={() => setCity(i)}
+                style={[styles.cityPill, city === i ? styles.cityActive : styles.cityIdle]}>
+                <ThemedText type="smallBold" themeColor={city === i ? 'onBrand' : 'text'}>
+                  {cLabel}
                 </ThemedText>
-              </View>
+              </Pressable>
             ))}
           </View>
 
@@ -84,11 +111,9 @@ export default function DefisScreen() {
                     <Avatar name={c.from?.display_name ?? '?'} size={44} />
                     <View style={styles.cardMain}>
                       <ThemedText type="cardTitle">{c.from?.display_name ?? 'Joueur'}</ThemedText>
-                      {c.message ? (
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {c.message}
-                        </ThemedText>
-                      ) : null}
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Défi · Format {(c.format ?? 'wtt').toUpperCase()}
+                      </ThemedText>
                     </View>
                     <Pressable style={styles.declineBtn} onPress={() => decline(c)}>
                       <Ionicons name="close" size={18} color={Palette.redInk} />
@@ -104,6 +129,35 @@ export default function DefisScreen() {
             </>
           ) : null}
 
+          {recent.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Adversaires récents
+              </ThemedText>
+              <View style={styles.list}>
+                {recent.map((o) => (
+                  <View key={o.id} style={styles.card}>
+                    <Pressable style={styles.cardLeft} onPress={() => goProfile(o.id)}>
+                      <Avatar name={o.name} size={48} color={Palette.purple} />
+                      <View style={styles.cardMain}>
+                        <ThemedText type="cardTitle">{o.name}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          ELO {o.elo}
+                          {o.city ? ` · ${o.city}` : ''}
+                        </ThemedText>
+                      </View>
+                    </Pressable>
+                    <Pressable style={styles.revanche} onPress={() => goChallenge(o)}>
+                      <ThemedText type="smallBold" themeColor="brand">
+                        Revanche
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
+
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Joueurs près de toi
           </ThemedText>
@@ -111,16 +165,14 @@ export default function DefisScreen() {
           {filtered.length === 0 ? (
             <View style={styles.empty}>
               <ThemedText type="default" themeColor="textSecondary">
-                Aucun autre joueur pour l&apos;instant. Invite des potes du club à rejoindre Ping Pang ! 🏓
+                Aucun joueur pour cette recherche. 🏓
               </ThemedText>
             </View>
           ) : (
             <View style={styles.list}>
               {filtered.map((p) => (
                 <View key={p.id} style={styles.card}>
-                  <Pressable
-                    style={styles.cardLeft}
-                    onPress={() => router.push({ pathname: '/player', params: { id: p.id } })}>
+                  <Pressable style={styles.cardLeft} onPress={() => goProfile(p.id)}>
                     <Avatar name={p.display_name} size={48} />
                     <View style={styles.cardMain}>
                       <ThemedText type="cardTitle">{p.display_name}</ThemedText>
@@ -132,12 +184,7 @@ export default function DefisScreen() {
                   </Pressable>
                   <Pressable
                     style={styles.defier}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/new-match',
-                        params: { opponentId: p.id, opponentName: p.display_name },
-                      })
-                    }>
+                    onPress={() => goChallenge({ id: p.id, name: p.display_name, elo: p.elo, city: p.city })}>
                     <ThemedText type="smallBold" themeColor="onBrand">
                       Défier
                     </ThemedText>
@@ -226,6 +273,12 @@ const styles = StyleSheet.create({
   cardMain: { flex: 1 },
   defier: {
     backgroundColor: Palette.evergreen,
+    borderRadius: Radius.xs,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
+  revanche: {
+    backgroundColor: Palette.lime,
     borderRadius: Radius.xs,
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,

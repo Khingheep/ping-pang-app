@@ -10,7 +10,6 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { levelForElo } from '@/lib/elo';
 import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
-import { sendChallenge } from '@/lib/social/challenges';
 import {
   acceptFriendRequest,
   getFriendStatus,
@@ -31,7 +30,6 @@ export default function PlayerScreen() {
   const { session } = useAuth();
   const myId = session?.user?.id;
   const [p, setP] = useState<PlayerProfile | null>(null);
-  const [busy, setBusy] = useState(false);
   const [friend, setFriend] = useState<FriendStatus>('none');
   const [friendBusy, setFriendBusy] = useState(false);
 
@@ -61,20 +59,6 @@ export default function PlayerScreen() {
       Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
     } finally {
       setFriendBusy(false);
-    }
-  }
-
-  async function sendDefi() {
-    const me = session?.user?.id;
-    if (!me || !p) return;
-    try {
-      setBusy(true);
-      await sendChallenge(me, p.id, 'Défi lancé !');
-      Alert.alert('Défi envoyé ⚡', `${p.display_name} a reçu ton défi.`);
-    } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -185,9 +169,21 @@ export default function PlayerScreen() {
                   <Ionicons name="chatbubble-outline" size={18} color={Palette.onyx} />
                   <ThemedText type="smallBold">Message</ThemedText>
                 </Pressable>
-                <Pressable style={styles.actionBtn} disabled={busy} onPress={sendDefi}>
+                <Pressable
+                  style={styles.actionBtn}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/challenge',
+                      params: {
+                        opponentId: p.id,
+                        opponentName: p.display_name,
+                        opponentElo: String(p.elo),
+                        opponentCity: p.city ?? '',
+                      },
+                    })
+                  }>
                   <Ionicons name="flash-outline" size={18} color={Palette.onyx} />
-                  <ThemedText type="smallBold">Envoyer un défi</ThemedText>
+                  <ThemedText type="smallBold">Défier</ThemedText>
                 </Pressable>
               </View>
             </>
