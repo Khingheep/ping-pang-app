@@ -28,8 +28,13 @@ function findFont(root, namePrefix) {
 }
 
 const ioniconsUrl = findFont(`${dir}/assets`, 'Ionicons');
+// @expo/vector-icons rend les icônes avec fontFamily 'ionicons' (minuscule) sur web ;
+// on déclare les 2 casses par sécurité.
 const fontFace = ioniconsUrl
-  ? `<style>@font-face{font-family:'Ionicons';src:url('${ioniconsUrl}') format('truetype');font-display:block;}</style>`
+  ? `<style>` +
+    `@font-face{font-family:'ionicons';src:url('${ioniconsUrl}') format('truetype');font-display:block;}` +
+    `@font-face{font-family:'Ionicons';src:url('${ioniconsUrl}') format('truetype');font-display:block;}` +
+    `</style>`
   : '';
 if (!ioniconsUrl) console.warn('⚠️  Ionicons.ttf introuvable dans le build — @font-face non injecté.');
 
