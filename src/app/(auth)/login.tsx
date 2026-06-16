@@ -36,9 +36,13 @@ export default function LoginScreen() {
       if (mode === 'signin') {
         await signInWithEmail(email.trim(), password);
       } else {
-        await signUpWithEmail(email.trim(), password);
-        Alert.alert('Compte créé', 'Tu peux maintenant te connecter.');
-        setMode('signin');
+        const hasSession = await signUpWithEmail(email.trim(), password);
+        // Session immédiate (confirmation email désactivée) → le RootNavigator
+        // redirige automatiquement vers /onboarding (player.onboarded = false).
+        if (!hasSession) {
+          Alert.alert('Vérifie tes emails', 'Confirme ton adresse pour activer ton compte, puis connecte-toi.');
+          setMode('signin');
+        }
       }
     } catch (e) {
       Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');

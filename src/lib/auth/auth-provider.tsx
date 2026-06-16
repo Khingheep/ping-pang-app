@@ -19,7 +19,8 @@ type AuthContextValue = {
   loading: boolean;
   signIn: (provider: AuthProviderId) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
-  signUpWithEmail: (email: string, password: string) => Promise<void>;
+  /** Retourne true si une session est ouverte immédiatement (confirmation email désactivée). */
+  signUpWithEmail: (email: string, password: string) => Promise<boolean>;
   signOut: () => Promise<void>;
   needsOnboarding: boolean;
   markOnboarded: () => void;
@@ -110,8 +111,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error;
       },
       async signUpWithEmail(email, password) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
+        return !!data.session; // session immédiate si la confirmation email est désactivée
       },
       async signOut() {
         await supabase.auth.signOut();
