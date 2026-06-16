@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { VenueMap, type VenueMapHandle } from '@/components/venue-map';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
+import { fetchUpcomingSlots, slotTimeLabel, type Slot } from '@/lib/slots/slots';
 import { fetchEvents, fetchVenues, type EventPP, type Venue } from '@/lib/venues/venues';
 
 const FILTERS = ['Tout', 'Intérieur', 'Extérieur'];
@@ -20,6 +22,7 @@ function eventDate(iso: string | null): string {
 export default function CarteScreen() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [events, setEvents] = useState<EventPP[]>([]);
+  const [slots, setSlots] = useState<Slot[]>([]);
   const [filter, setFilter] = useState(0);
   const mapRef = useRef<VenueMapHandle>(null);
   const filterRef = useRef(0); // évite une closure obsolète dans onMapReady
@@ -28,6 +31,7 @@ export default function CarteScreen() {
     useCallback(() => {
       fetchVenues().then(setVenues);
       fetchEvents().then(setEvents);
+      fetchUpcomingSlots(20).then(setSlots);
     }, []),
   );
 
@@ -43,9 +47,11 @@ export default function CarteScreen() {
   // À chaque (re)chargement de la map, on ré-applique le filtre courant.
   const onMapReady = useCallback(() => mapRef.current?.applyFilter(filterRef.current), []);
 
-  const focusVenue = useCallback((v: Venue) => {
-    if (v.lat == null || v.lng == null) return;
-    mapRef.current?.focus(v.id);
+  const openVenue = useCallback((v: Venue) => {
+    router.push({
+      pathname: '/venue',
+      params: { id: v.id, name: v.name, address: v.address ?? '', indoor: String(!!v.indoor) },
+    });
   }, []);
 
   return (
@@ -71,7 +77,7 @@ export default function CarteScreen() {
 
           <View style={styles.list}>
             {filtered.map((v) => (
-              <Pressable key={v.id} style={styles.venueCard} onPress={() => focusVenue(v)}>
+              <Pressable key={v.id} style={styles.venueCard} onPress={() => openVenue(v)}>
                 <View style={[styles.pin, { backgroundColor: v.indoor ? Palette.blue : Palette.lime }]}>
                   <Ionicons name={v.indoor ? 'home' : 'sunny'} size={18} color={Palette.onyx} />
                 </View>
@@ -89,6 +95,38 @@ export default function CarteScreen() {
             {filtered.length === 0 ? (
               <ThemedText type="small" themeColor="textMuted">
                 Aucun lieu pour ce filtre.
+              </ThemedText>
+            ) : null}
+          </View>
+
+          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+            Créneaux à venir{slots.length ? ` (${slots.length})` : ''}
+          </ThemedText>
+          <View style={styles.list}>
+            {slots.map((s) => (
+              <Pressable
+                key={s.id}
+                style={styles.slotRow}
+                onPress={() => router.push({ pathname: '/venue', params: { id: s.venueId, name: s.venueName } })}>
+                <Avatar name={s.hostName} size={36} color={Palette.purple} />
+                <View style={styles.venueMain}>
+                  <ThemedText type="cardTitle" numberOfLines={1}>
+                    {s.hostName} · {s.venueName}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {slotTimeLabel(s.startsAt, s.endsAt)}
+                  </ThemedText>
+                </View>
+                <View style={styles.spots}>
+                  <ThemedText type="smallBold" themeColor="brand">
+                    {s.participants.length} 👥
+                  </ThemedText>
+                </View>
+              </Pressable>
+            ))}
+            {slots.length === 0 ? (
+              <ThemedText type="small" themeColor="textMuted">
+                Aucun créneau proposé. Ouvre un lieu pour en créer un !
               </ThemedText>
             ) : null}
           </View>
@@ -169,6 +207,16 @@ const styles = StyleSheet.create({
   },
   pin: { width: 40, height: 40, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
   venueMain: { flex: 1 },
+  slotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   eventCard: {
     flexDirection: 'row',

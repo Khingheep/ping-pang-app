@@ -27,6 +27,15 @@ export async function fetchVenues(): Promise<Venue[]> {
   return (data as Venue[] | null) ?? [];
 }
 
+export async function fetchVenue(id: string): Promise<Venue | null> {
+  const { data } = await supabase
+    .from('venues')
+    .select('id, name, address, indoor, lat, lng')
+    .eq('id', id)
+    .maybeSingle();
+  return (data as Venue | null) ?? null;
+}
+
 export async function fetchEvents(): Promise<EventPP[]> {
   const { data } = await supabase
     .from('events_ppp')

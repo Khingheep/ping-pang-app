@@ -17,6 +17,8 @@ const ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   match_disputed: 'alert-circle',
   friend_request: 'person-add',
   friend_accepted: 'people',
+  slot: 'calendar',
+  slot_join: 'calendar-outline',
 };
 
 function rel(iso: string): string {
