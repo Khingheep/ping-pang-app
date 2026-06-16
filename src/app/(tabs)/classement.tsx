@@ -65,7 +65,11 @@ export default function RankingScreen() {
             {PODIUM.map((p) => {
               const e = top3[p.idx];
               return (
-                <View key={p.idx} style={[styles.podiumCol, { height: p.h, backgroundColor: p.bg }]}>
+                <Pressable
+                  key={p.idx}
+                  disabled={!e}
+                  onPress={() => e && router.push({ pathname: '/player', params: { id: e.id } })}
+                  style={[styles.podiumCol, { height: p.h, backgroundColor: p.bg }]}>
                   <ThemedText type="subtitle">#{p.idx + 1}</ThemedText>
                   <ThemedText type="cardTitle" style={styles.podiumName}>
                     {e?.display_name ?? '—'}
@@ -73,7 +77,7 @@ export default function RankingScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     {e ? e.elo : '—'}
                   </ThemedText>
-                </View>
+                </Pressable>
               );
             })}
           </View>

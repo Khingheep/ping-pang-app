@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -54,6 +55,8 @@ function RootNavigator() {
 
 export default function RootLayout() {
   const [loaded] = useFonts({
+    // Police d'icônes Ionicons — nécessaire pour qu'elles s'affichent sur le web (sinon tofu).
+    ...Ionicons.font,
     'OpenSauceOne-Regular': require('@/assets/fonts/OpenSauceOne-Regular.ttf'),
     'OpenSauceOne-Medium': require('@/assets/fonts/OpenSauceOne-Medium.ttf'),
     'OpenSauceOne-SemiBold': require('@/assets/fonts/OpenSauceOne-SemiBold.ttf'),
