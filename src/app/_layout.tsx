@@ -1,9 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useFonts } from 'expo-font';
+import { loadAsync, useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Palette } from '@/constants/theme';
@@ -54,9 +54,7 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
-  const [loaded] = useFonts({
-    // Police d'icônes Ionicons — nécessaire pour qu'elles s'affichent sur le web (sinon tofu).
-    ...Ionicons.font,
+  const [loaded, fontError] = useFonts({
     'OpenSauceOne-Regular': require('@/assets/fonts/OpenSauceOne-Regular.ttf'),
     'OpenSauceOne-Medium': require('@/assets/fonts/OpenSauceOne-Medium.ttf'),
     'OpenSauceOne-SemiBold': require('@/assets/fonts/OpenSauceOne-SemiBold.ttf'),
@@ -66,13 +64,23 @@ export default function RootLayout() {
     'OpenSauceTwo-Black': require('@/assets/fonts/OpenSauceTwo-Black.ttf'),
   });
 
+  // Web : la police Ionicons d'@expo/vector-icons vit sous un chemin `node_modules` que Cloudflare
+  // Pages ne sert pas. On charge la famille `ionicons` depuis le chemin propre /ionicons.ttf
+  // (copié par pwa-postbuild) → Font.isLoaded('ionicons') devient vrai et les <Icon> s'affichent.
+  // Sur natif, rien à faire (la police se charge normalement).
+  const [iconsReady, setIconsReady] = useState(Platform.OS !== 'web');
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
+    if (Platform.OS !== 'web') return;
+    loadAsync({ ionicons: '/ionicons.ttf' }).finally(() => setIconsReady(true));
+  }, []);
 
-  if (!loaded) {
+  // Gate tolérant : une erreur de police ne doit jamais laisser l'app en page blanche.
+  const ready = (loaded || !!fontError) && iconsReady;
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync();
+  }, [ready]);
+
+  if (!ready) {
     return null;
   }
 
