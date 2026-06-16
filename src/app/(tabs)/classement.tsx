@@ -8,6 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchLeaderboard, type LeaderboardEntry } from '@/lib/players/profile';
+import { fetchFriendIds } from '@/lib/social/friends';
 
 const FILTERS = ['Tous', 'France', 'Paris', 'Amis'];
 const PODIUM = [
@@ -19,16 +20,26 @@ const PODIUM = [
 export default function RankingScreen() {
   const { session } = useAuth();
   const [rows, setRows] = useState<LeaderboardEntry[]>([]);
+  const [friendIds, setFriendIds] = useState<string[]>([]);
+  const [filter, setFilter] = useState(0);
   const myId = session?.user?.id;
 
   useFocusEffect(
     useCallback(() => {
-      fetchLeaderboard(100).then(setRows);
-    }, []),
+      fetchLeaderboard(200).then(setRows);
+      if (myId) fetchFriendIds(myId).then(setFriendIds);
+    }, [myId]),
   );
 
-  const top3 = rows.slice(0, 3);
-  const rest = rows.slice(3);
+  const filtered = rows.filter((e) => {
+    if (filter === 1) return e.country === 'France';
+    if (filter === 2) return (e.city ?? '').toLowerCase().startsWith('paris');
+    if (filter === 3) return e.id === myId || friendIds.includes(e.id);
+    return true; // Tous
+  });
+
+  const top3 = filtered.slice(0, 3);
+  const rest = filtered.slice(3);
 
   return (
     <View style={styles.root}>
@@ -38,11 +49,14 @@ export default function RankingScreen() {
 
           <View style={styles.filters}>
             {FILTERS.map((f, i) => (
-              <View key={f} style={[styles.pill, i === 0 ? styles.pillActive : styles.pillIdle]}>
-                <ThemedText type="smallBold" themeColor={i === 0 ? 'onBrand' : 'text'}>
+              <Pressable
+                key={f}
+                onPress={() => setFilter(i)}
+                style={[styles.pill, filter === i ? styles.pillActive : styles.pillIdle]}>
+                <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'text'}>
                   {f}
                 </ThemedText>
-              </View>
+              </Pressable>
             ))}
           </View>
 
@@ -93,9 +107,11 @@ export default function RankingScreen() {
                 </Pressable>
               );
             })}
-            {rows.length === 0 ? (
+            {filtered.length === 0 ? (
               <ThemedText type="default" themeColor="textSecondary">
-                Aucun joueur encore classé.
+                {filter === 3
+                  ? 'Aucun ami pour l’instant. Ajoute des joueurs depuis leur profil !'
+                  : 'Aucun joueur pour ce filtre.'}
               </ThemedText>
             ) : null}
           </View>

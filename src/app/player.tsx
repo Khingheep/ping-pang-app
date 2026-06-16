@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -11,16 +11,58 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { levelForElo } from '@/lib/elo';
 import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 import { sendChallenge } from '@/lib/social/challenges';
+import {
+  acceptFriendRequest,
+  getFriendStatus,
+  removeFriend,
+  sendFriendRequest,
+  type FriendStatus,
+} from '@/lib/social/friends';
+
+const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
+  none: { icon: 'person-add-outline', label: 'Ajouter en ami' },
+  pending_out: { icon: 'time-outline', label: 'Demande envoyée' },
+  pending_in: { icon: 'checkmark-circle', label: 'Accepter la demande' },
+  friends: { icon: 'people', label: 'Amis ✓' },
+};
 
 export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { session } = useAuth();
+  const myId = session?.user?.id;
   const [p, setP] = useState<PlayerProfile | null>(null);
   const [busy, setBusy] = useState(false);
+  const [friend, setFriend] = useState<FriendStatus>('none');
+  const [friendBusy, setFriendBusy] = useState(false);
 
   useEffect(() => {
     if (id) fetchMyProfile(id).then(setP);
   }, [id]);
+
+  useEffect(() => {
+    if (id && myId && id !== myId) getFriendStatus(myId, id).then(setFriend);
+  }, [id, myId]);
+
+  async function onFriend() {
+    if (!myId || !p) return;
+    try {
+      setFriendBusy(true);
+      if (friend === 'none') {
+        await sendFriendRequest(myId, p.id);
+        setFriend('pending_out');
+      } else if (friend === 'pending_in') {
+        await acceptFriendRequest(myId, p.id);
+        setFriend('friends');
+      } else if (friend === 'friends' || friend === 'pending_out') {
+        await removeFriend(myId, p.id);
+        setFriend('none');
+      }
+    } catch (e) {
+      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+    } finally {
+      setFriendBusy(false);
+    }
+  }
 
   async function sendDefi() {
     const me = session?.user?.id;
@@ -104,6 +146,30 @@ export default function PlayerScreen() {
           {!isMe && p ? (
             <>
               <Pressable
+                style={[
+                  styles.friendBtn,
+                  friend === 'pending_in' && styles.friendAccept,
+                  friend === 'friends' && styles.friendIs,
+                ]}
+                disabled={friendBusy}
+                onPress={onFriend}>
+                {friendBusy ? (
+                  <ActivityIndicator color={Palette.evergreen} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name={FRIEND_CFG[friend].icon}
+                      size={18}
+                      color={friend === 'pending_in' ? Palette.whitePP : Palette.evergreen}
+                    />
+                    <ThemedText type="smallBold" themeColor={friend === 'pending_in' ? 'onBrand' : 'brand'}>
+                      {FRIEND_CFG[friend].label}
+                    </ThemedText>
+                  </>
+                )}
+              </Pressable>
+
+              <Pressable
                 style={styles.defier}
                 onPress={() =>
                   router.push({ pathname: '/new-match', params: { opponentId: p.id, opponentName: p.display_name } })
@@ -167,6 +233,19 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     gap: Spacing.half,
   },
+  friendBtn: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 50,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.evergreen,
+  },
+  friendAccept: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
+  friendIs: { backgroundColor: Palette.lime, borderColor: Palette.lime },
   defier: {
     marginTop: Spacing.two,
     height: 54,

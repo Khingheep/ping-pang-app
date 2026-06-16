@@ -22,11 +22,12 @@ export type LeaderboardEntry = {
   handle: string;
   display_name: string;
   city: string | null;
+  country: string | null;
   elo: number;
   level: string;
 };
 
-const LIST_COLS = 'id, handle, display_name, city, elo, level';
+const LIST_COLS = 'id, handle, display_name, city, country, elo, level';
 
 function handleFromUser(user: User): string {
   const base = (user.email?.split('@')[0] ?? 'joueur').toLowerCase().replace(/[^a-z0-9_]/g, '');
