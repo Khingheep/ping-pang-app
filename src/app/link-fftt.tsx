@@ -24,11 +24,11 @@ const SEXES: ('Hommes' | 'Femmes')[] = ['Hommes', 'Femmes'];
 
 export default function LinkFfttScreen() {
   const { session } = useAuth();
-  const { onboarding } = useLocalSearchParams<{ onboarding?: string }>();
+  const { onboarding, sexe: sexeParam } = useLocalSearchParams<{ onboarding?: string; sexe?: string }>();
   const isOnboarding = onboarding === '1';
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
-  const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>('Hommes');
+  const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>(sexeParam === 'Femmes' ? 'Femmes' : 'Hommes');
   const [results, setResults] = useState<FfttPlayer[]>([]);
   const [onlineLoading, setOnlineLoading] = useState(false);
   const [linkingId, setLinkingId] = useState<string | null>(null);
@@ -97,31 +97,36 @@ export default function LinkFfttScreen() {
 
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.form}>
-            <View style={styles.sexRow}>
-              {SEXES.map((s) => (
-                <Pressable key={s} onPress={() => setSexe(s)} style={[styles.sexPill, sexe === s ? styles.on : styles.off]}>
-                  <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>
-                    {s}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </View>
+            {/* En onboarding, le sexe est déjà choisi avant — on ne demande que le nom (minimal). */}
+            {!isOnboarding ? (
+              <View style={styles.sexRow}>
+                {SEXES.map((s) => (
+                  <Pressable key={s} onPress={() => setSexe(s)} style={[styles.sexPill, sexe === s ? styles.on : styles.off]}>
+                    <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>
+                      {s}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
             <TextInput
               style={styles.input}
-              placeholder="Nom (tape 3 lettres)"
+              placeholder="Ton nom de famille"
               placeholderTextColor={Palette.grey}
               value={nom}
               onChangeText={setNom}
               autoCapitalize="characters"
               autoFocus
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Prénom (optionnel)"
-              placeholderTextColor={Palette.grey}
-              value={prenom}
-              onChangeText={setPrenom}
-            />
+            {!isOnboarding ? (
+              <TextInput
+                style={styles.input}
+                placeholder="Prénom (optionnel)"
+                placeholderTextColor={Palette.grey}
+                value={prenom}
+                onChangeText={setPrenom}
+              />
+            ) : null}
           </View>
 
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">

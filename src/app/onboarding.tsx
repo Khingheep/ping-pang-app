@@ -45,6 +45,7 @@ export default function OnboardingScreen() {
 
   // FFTT (si licencié) — la recherche se fait sur un écran dédié
   const [fftt, setFftt] = useState<FfttPlayer | null>(null);
+  const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>('Hommes');
 
   // finalisation
   const [firstName, setFirstName] = useState('');
@@ -251,12 +252,31 @@ export default function OnboardingScreen() {
                       </Pressable>
                     </View>
                   ) : (
-                    <Pressable style={styles.ffttBtn} onPress={() => router.push('/link-fftt?onboarding=1')}>
-                      <Ionicons name="search" size={18} color={Palette.evergreen} />
-                      <ThemedText type="cardTitle" themeColor="brand">
-                        Trouver ma licence sur FFTT
+                    <>
+                      <ThemedText type="smallBold" themeColor="textSecondary">
+                        TU ES
                       </ThemedText>
-                    </Pressable>
+                      <View style={styles.sexRow}>
+                        {(['Hommes', 'Femmes'] as const).map((s) => (
+                          <Pressable
+                            key={s}
+                            onPress={() => setSexe(s)}
+                            style={[styles.sexPill, sexe === s ? styles.on : styles.off]}>
+                            <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>
+                              {s === 'Hommes' ? 'Un homme' : 'Une femme'}
+                            </ThemedText>
+                          </Pressable>
+                        ))}
+                      </View>
+                      <Pressable
+                        style={styles.ffttBtn}
+                        onPress={() => router.push(`/link-fftt?onboarding=1&sexe=${sexe}`)}>
+                        <Ionicons name="search" size={18} color={Palette.evergreen} />
+                        <ThemedText type="cardTitle" themeColor="brand">
+                          Trouver ma licence sur FFTT
+                        </ThemedText>
+                      </Pressable>
+                    </>
                   )}
                 </View>
               ) : null}
@@ -399,6 +419,8 @@ const styles = StyleSheet.create({
   typeOn: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
   typeOff: { backgroundColor: Palette.white, borderColor: Palette.border },
   ffttBox: { marginTop: Spacing.three, gap: Spacing.two },
+  sexRow: { flexDirection: 'row', gap: Spacing.two },
+  sexPill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.sm, alignItems: 'center' },
   ffttBtn: {
     flexDirection: 'row',
     alignItems: 'center',
