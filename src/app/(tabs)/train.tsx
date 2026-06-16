@@ -1,7 +1,8 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -9,129 +10,127 @@ import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { coachUrl, fetchCoaches, type Coach } from '@/lib/podplay/coaches';
 import {
-  addTrainingSession,
   fetchTrainingSessions,
-  type TrainingKind,
+  fetchTrainingStats,
+  formatDuration,
+  formatHours,
   type TrainingSession,
+  type TrainingStats,
 } from '@/lib/training/sessions';
 
-const KINDS: { key: TrainingKind; label: string }[] = [
-  { key: 'match', label: 'Match' },
-  { key: 'solo', label: 'Solo' },
-  { key: 'jonglage', label: 'Jonglage' },
-  { key: 'fitness', label: 'Fitness' },
-];
-const FEELINGS = ['💪', '🔥', '😅', '😐', '😩'];
-const KIND_LABEL: Record<string, string> = { match: 'Match', solo: 'Solo', jonglage: 'Jonglage', fitness: 'Fitness' };
+const STROKE_COLORS = [Palette.purple, Palette.blue, Palette.lime, Palette.evergreen, Palette.green, Palette.grey];
+const CHART_H = 90;
 
 export default function TrainScreen() {
   const { session } = useAuth();
-  const [kind, setKind] = useState<TrainingKind>('solo');
-  const [duration, setDuration] = useState(30);
-  const [feeling, setFeeling] = useState<string | null>(null);
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [stats, setStats] = useState<TrainingStats | null>(null);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [coaches, setCoaches] = useState<Coach[]>([]);
 
   const load = useCallback(() => {
     const id = session?.user?.id;
-    if (id) fetchTrainingSessions(id).then(setSessions);
+    if (id) {
+      fetchTrainingStats(id).then(setStats);
+      fetchTrainingSessions(id, 5).then(setSessions);
+    }
     fetchCoaches().then(setCoaches);
   }, [session?.user?.id]);
 
   useFocusEffect(load);
 
-  async function save() {
-    const id = session?.user?.id;
-    if (!id) return;
-    try {
-      setBusy(true);
-      await addTrainingSession({ playerId: id, kind, durationMin: duration, feeling, note: note || null });
-      setNote('');
-      setFeeling(null);
-      load();
-      Alert.alert('Séance enregistrée 🏓', `${KIND_LABEL[kind]} · ${duration} min`);
-    } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const maxStroke = Math.max(1, ...(stats?.byStroke ?? []).map((s) => s.min));
+  const maxWeek = Math.max(1, ...(stats?.weekly ?? []).map((w) => w.min));
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Entraînements</ThemedText>
-          <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
-            Note tes séances, suis ta progression.
-          </ThemedText>
 
-          <View style={styles.card}>
-            <ThemedText type="smallBold" themeColor="textSecondary">
-              TYPE
+          <Pressable style={styles.logBtn} onPress={() => router.push('/new-training')}>
+            <Ionicons name="add" size={20} color={Palette.evergreen} />
+            <ThemedText type="cardTitle" themeColor="brand">
+              Renseigner mon entraînement
             </ThemedText>
-            <View style={styles.pillRow}>
-              {KINDS.map((k) => (
-                <Pressable
-                  key={k.key}
-                  onPress={() => setKind(k.key)}
-                  style={[styles.pill, kind === k.key ? styles.pillActive : styles.pillIdle]}>
-                  <ThemedText type="smallBold" themeColor={kind === k.key ? 'onBrand' : 'text'}>
-                    {k.label}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </View>
+          </Pressable>
 
-            <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-              DURÉE
+          {/* Hero total */}
+          <View style={styles.hero}>
+            <ThemedText type="metric" style={styles.heroBig}>
+              {formatHours(stats?.totalMinYear ?? 0)}
             </ThemedText>
-            <View style={styles.durRow}>
-              <Pressable style={styles.durBtn} onPress={() => setDuration(Math.max(15, duration - 15))}>
-                <ThemedText type="cardTitle">−</ThemedText>
-              </Pressable>
-              <ThemedText type="subtitle">{duration} min</ThemedText>
-              <Pressable style={styles.durBtn} onPress={() => setDuration(Math.min(240, duration + 15))}>
-                <ThemedText type="cardTitle">+</ThemedText>
-              </Pressable>
-            </View>
-
-            <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-              FEELING
+            <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.8 }}>
+              temps total d&apos;entraînement cette année
             </ThemedText>
-            <View style={styles.pillRow}>
-              {FEELINGS.map((f) => (
-                <Pressable
-                  key={f}
-                  onPress={() => setFeeling(f)}
-                  style={[styles.feeling, feeling === f && styles.feelingActive]}>
-                  <ThemedText type="subtitle">{f}</ThemedText>
-                </Pressable>
-              ))}
-            </View>
-
-            <TextInput
-              style={styles.note}
-              placeholder="Note (optionnel)"
-              placeholderTextColor={Palette.grey}
-              value={note}
-              onChangeText={setNote}
-              multiline
-            />
-
-            <Pressable style={[styles.save, busy && { opacity: 0.6 }]} disabled={busy} onPress={save}>
-              {busy ? (
-                <ActivityIndicator color={Palette.whitePP} />
-              ) : (
-                <ThemedText type="cardTitle" themeColor="onBrand">
-                  Enregistrer la séance
+            {stats && stats.weekMin > 0 ? (
+              <View style={styles.weekTag}>
+                <ThemedText type="smallBold" themeColor="brand">
+                  +{formatHours(stats.weekMin)} cette semaine
                 </ThemedText>
-              )}
-            </Pressable>
+              </View>
+            ) : null}
           </View>
 
+          {/* Répartition par coup */}
+          {stats && stats.byStroke.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Répartition par coup
+              </ThemedText>
+              <View style={styles.card}>
+                {stats.byStroke.map((s, i) => (
+                  <View key={s.stroke} style={styles.strokeRow}>
+                    <View style={styles.strokeHead}>
+                      <ThemedText type="smallBold">{s.stroke}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {formatHours(s.min)}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.track}>
+                      <View
+                        style={[
+                          styles.fill,
+                          { width: `${Math.max(6, (s.min / maxStroke) * 100)}%`, backgroundColor: STROKE_COLORS[i % STROKE_COLORS.length] },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
+
+          {/* Activité hebdo */}
+          {stats ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Activité (8 dernières semaines)
+              </ThemedText>
+              <View style={styles.card}>
+                <View style={styles.chart}>
+                  {stats.weekly.map((w, i) => (
+                    <View key={i} style={styles.chartCol}>
+                      <View style={styles.barWrap}>
+                        <View
+                          style={{
+                            width: '70%',
+                            height: Math.max(3, (w.min / maxWeek) * CHART_H),
+                            backgroundColor: w.min > 0 ? Palette.purple : Palette.border,
+                            borderRadius: 3,
+                          }}
+                        />
+                      </View>
+                      <ThemedText type="small" themeColor="textMuted" style={styles.chartLbl}>
+                        {w.label}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </>
+          ) : null}
+
+          {/* Coachs */}
           {coaches.length > 0 ? (
             <>
               <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
@@ -160,27 +159,36 @@ export default function TrainScreen() {
             </>
           ) : null}
 
-          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-            Historique
-          </ThemedText>
+          {/* Mes séances (récentes) */}
+          <View style={styles.seancesHead}>
+            <ThemedText type="sectionTitle" themeColor="textSecondary">
+              Mes séances
+            </ThemedText>
+            {sessions.length > 0 ? (
+              <Pressable onPress={() => router.push('/mes-seances')}>
+                <ThemedText type="smallBold" themeColor="brand">
+                  Voir tout
+                </ThemedText>
+              </Pressable>
+            ) : null}
+          </View>
           {sessions.length === 0 ? (
             <ThemedText type="small" themeColor="textMuted">
-              Aucune séance enregistrée pour l&apos;instant.
+              Aucune séance enregistrée. Renseigne ta première séance !
             </ThemedText>
           ) : (
             <View style={{ gap: Spacing.two }}>
               {sessions.map((s) => (
                 <View key={s.id} style={styles.histRow}>
-                  <ThemedText type="subtitle">{s.feeling ?? '🏓'}</ThemedText>
                   <View style={{ flex: 1 }}>
                     <ThemedText type="cardTitle">
-                      {KIND_LABEL[s.kind] ?? s.kind} · {s.duration_min} min
+                      {formatDuration(s.duration_min)}
+                      {s.feeling ? ` · ${s.feeling}` : ''}
                     </ThemedText>
-                    {s.note ? (
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {s.note}
-                      </ThemedText>
-                    ) : null}
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                      {s.strokes.length ? s.strokes.join(', ') : 'Séance'}
+                      {s.venue ? ` · ${s.venue.name}` : ''}
+                    </ThemedText>
                   </View>
                   <ThemedText type="small" themeColor="textMuted">
                     {new Date(s.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
@@ -199,68 +207,61 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
-  sub: { marginTop: Spacing.one, marginBottom: Spacing.four },
+  logBtn: {
+    marginTop: Spacing.three,
+    height: 52,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.purple,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+  },
+  hero: {
+    marginTop: Spacing.four,
+    backgroundColor: Palette.evergreen,
+    borderRadius: Radius.md,
+    padding: Spacing.four,
+    gap: Spacing.one,
+  },
+  heroBig: { color: Palette.lime, fontSize: 44, lineHeight: 48 },
+  weekTag: {
+    alignSelf: 'flex-start',
+    marginTop: Spacing.two,
+    backgroundColor: Palette.lime,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.half,
+  },
+  section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   card: {
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.four,
-    gap: Spacing.two,
+    gap: Spacing.three,
   },
-  lbl: { marginTop: Spacing.three },
-  pillRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
-  pill: { flex: 1, minWidth: 64, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
-  pillActive: { backgroundColor: Palette.evergreen },
-  pillIdle: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  durRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.one },
-  durBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.whitePP,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  feeling: {
-    width: 52,
-    height: 52,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.whitePP,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  feelingActive: { borderColor: Palette.evergreen, borderWidth: 2, backgroundColor: Palette.lime },
-  note: {
-    marginTop: Spacing.three,
-    minHeight: 48,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.whitePP,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    padding: Spacing.three,
-    color: Palette.onyx,
-    fontFamily: 'OpenSauceOne-Regular',
-    fontSize: 15,
-  },
-  save: {
-    marginTop: Spacing.three,
-    height: 52,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  section: { marginTop: Spacing.five, marginBottom: Spacing.two },
+  strokeRow: { gap: Spacing.one },
+  strokeHead: { flexDirection: 'row', justifyContent: 'space-between' },
+  track: { height: 8, borderRadius: 4, backgroundColor: Palette.whitePP, overflow: 'hidden' },
+  fill: { height: 8, borderRadius: 4 },
+  chart: { flexDirection: 'row', alignItems: 'flex-end', height: CHART_H + 22, gap: Spacing.one },
+  chartCol: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
+  barWrap: { height: CHART_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' },
+  chartLbl: { marginTop: Spacing.one, fontSize: 9 },
   coachRow: { gap: Spacing.three, paddingVertical: Spacing.one, paddingRight: Spacing.four },
   coachCard: { width: 96, alignItems: 'center', gap: Spacing.half },
   coachPic: { width: 96, height: 96, borderRadius: Radius.md, backgroundColor: Palette.white },
   coachPicEmpty: { borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   coachName: { marginTop: Spacing.one, textAlign: 'center' },
+  seancesHead: {
+    marginTop: Spacing.five,
+    marginBottom: Spacing.two,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   histRow: {
     flexDirection: 'row',
     alignItems: 'center',
