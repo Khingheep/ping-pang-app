@@ -2,7 +2,7 @@
 // + un @font-face STATIQUE pour Ionicons (sinon les icônes ne se chargent pas sur web -> tofu).
 // Le +html.tsx d'expo-router n'est pas appliqué en mode SPA. Idempotent.
 // Usage: node scripts/pwa-postbuild.mjs [dist-dir]
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 
 const dir = process.argv[2] || 'dist-web';
 const file = `${dir}/index.html`;
@@ -21,22 +21,30 @@ function findFont(root, namePrefix) {
     for (const entry of readdirSync(d)) {
       const full = `${d}/${entry}`;
       if (statSync(full).isDirectory()) stack.push(full);
-      else if (entry.startsWith(namePrefix) && entry.endsWith('.ttf')) return full.slice(dir.length); // url path
+      else if (entry.startsWith(namePrefix) && entry.endsWith('.ttf')) return full; // chemin fs complet
     }
   }
   return null;
 }
 
-const ioniconsUrl = findFont(`${dir}/assets`, 'Ionicons');
-// @expo/vector-icons rend les icônes avec fontFamily 'ionicons' (minuscule) sur web ;
-// on déclare les 2 casses par sécurité.
+// ⚠️ Cloudflare Pages IGNORE les dossiers `node_modules` au déploiement. La font Ionicons est
+// sous assets/node_modules/@expo/... -> jamais servie (404 -> fallback SPA -> tofu). On la
+// recopie à la racine du build (chemin propre) et on pointe le @font-face dessus.
+const ioniconsFull = findFont(`${dir}/assets`, 'Ionicons');
+let ioniconsUrl = '';
+if (ioniconsFull) {
+  copyFileSync(ioniconsFull, `${dir}/ionicons.ttf`);
+  ioniconsUrl = '/ionicons.ttf';
+} else {
+  console.warn('⚠️  Ionicons.ttf introuvable dans le build — @font-face non injecté.');
+}
+// @expo/vector-icons rend les icônes avec fontFamily 'ionicons' (minuscule) sur web ; 2 casses par sécurité.
 const fontFace = ioniconsUrl
   ? `<style>` +
     `@font-face{font-family:'ionicons';src:url('${ioniconsUrl}') format('truetype');font-display:block;}` +
     `@font-face{font-family:'Ionicons';src:url('${ioniconsUrl}') format('truetype');font-display:block;}` +
     `</style>`
   : '';
-if (!ioniconsUrl) console.warn('⚠️  Ionicons.ttf introuvable dans le build — @font-face non injecté.');
 
 html = html.replace('<html lang="en">', '<html lang="fr">');
 html = html.replace(
