@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,67 +11,79 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { ffttPointsToElo, levelForElo } from '@/lib/elo';
 import { searchFftt, searchFfttLocal, type FfttPlayer } from '@/lib/fftt/link';
+import { uploadAvatar } from '@/lib/players/avatar';
 import { updateMyProfile } from '@/lib/players/profile';
 
-const STYLES = ['Offensif', 'Défensif', 'Allround'];
-const HANDS = ['Droitier', 'Gaucher'];
-const GOALS = ['Compétition', 'Loisir', 'Progresser', 'Social'];
-const TOTAL = 5;
+const TOTAL = 6;
 
-function Chips({ options, value, onPick }: { options: string[]; value: string | null; onPick: (v: string) => void }) {
-  return (
-    <View style={styles.chips}>
-      {options.map((o) => (
-        <Pressable key={o} onPress={() => onPick(o)} style={[styles.chip, value === o ? styles.chipOn : styles.chipOff]}>
-          <ThemedText type="cardTitle" themeColor={value === o ? 'onBrand' : 'text'}>
-            {o}
-          </ThemedText>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
+const INTERESTS = [
+  'Trouver des lieux pour jouer',
+  'Suivre mes performances',
+  'Faire progresser mon classement',
+  "Rencontrer d'autres joueurs",
+  'Battre mes collègues de bureau',
+];
+
+const PLAYER_TYPES = [
+  { key: 'occasionnel', title: 'Occasionnel', sub: 'Je joue pour le plaisir, en vacances ou au bureau' },
+  { key: 'regulier', title: 'Régulier', sub: 'Je joue souvent, pour passer un bon moment' },
+  { key: 'competitif', title: 'Compétitif', sub: 'Chaque point compte' },
+  { key: 'licencie', title: 'Licencié FFTT', sub: 'On récupère ton classement automatiquement' },
+];
+
+const COUNTRIES = ['France', 'Belgique', 'Suisse', 'Autre'];
 
 export default function OnboardingScreen() {
   const { session, markOnboarded } = useAuth();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  // étape 1 — nom + FFTT
   const [name, setName] = useState('');
+  const [interests, setInterests] = useState<string[]>([]);
+  const [playerType, setPlayerType] = useState<string | null>(null);
+
+  // FFTT (si licencié)
   const [fftt, setFftt] = useState<FfttPlayer | null>(null);
   const [results, setResults] = useState<FfttPlayer[]>([]);
   const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>('Hommes');
   const [online, setOnline] = useState(false);
-  // étape 2 — ville
-  const [city, setCity] = useState('');
-  const [locating, setLocating] = useState(false);
-  // étapes 3-5
-  const [hand, setHand] = useState<string | null>(null);
-  const [style, setStyle] = useState<string | null>(null);
-  const [goal, setGoal] = useState<string | null>(null);
 
-  // typeahead local pendant la frappe du nom
+  // finalisation
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [country, setCountry] = useState('France');
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // typeahead FFTT local
   useEffect(() => {
-    if (step !== 0 || fftt) return;
+    if (playerType !== 'licencie' || fftt) return;
     const t = setTimeout(() => {
-      searchFfttLocal({ nom: name }).then(setResults).catch(() => {});
+      if (name.trim().length >= 2) searchFfttLocal({ nom: name }).then(setResults).catch(() => {});
     }, 250);
     return () => clearTimeout(t);
-  }, [name, step, fftt]);
+  }, [name, playerType, fftt]);
+
+  // pré-remplit le prénom à l'arrivée sur la finalisation
+  useEffect(() => {
+    if (step === 4 && !firstName && name.trim()) setFirstName(name.trim());
+  }, [step, name, firstName]);
+
+  function toggleInterest(i: string) {
+    setInterests((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
+  }
 
   function pickFftt(p: FfttPlayer) {
     setFftt(p);
     setName(`${p.prenom} ${p.nom}`);
     setResults([]);
   }
-
   async function searchOnline() {
     if (name.trim().length < 2) return;
     try {
       setOnline(true);
-      const r = await searchFftt({ nom: name.trim(), sexe });
-      setResults(r);
+      setResults(await searchFftt({ nom: name.trim(), sexe }));
     } catch (e) {
       Alert.alert('FFTT', e instanceof Error ? e.message : 'Recherche impossible.');
     } finally {
@@ -78,23 +91,30 @@ export default function OnboardingScreen() {
     }
   }
 
-  async function locate() {
+  async function pickPhoto() {
+    const id = session?.user?.id;
+    if (!id) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Photo', 'Autorise l’accès aux photos pour ajouter un avatar.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.6,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    const uri = res.assets[0].uri;
+    setPhoto(uri);
     try {
-      setLocating(true);
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Position', 'Permission refusée — tu peux entrer ta ville à la main.');
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({});
-      const geo = await Location.reverseGeocodeAsync({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
-      const c = geo[0]?.city ?? geo[0]?.subregion ?? geo[0]?.region ?? '';
-      if (c) setCity(c);
-      else Alert.alert('Position', 'Ville introuvable, entre-la à la main.');
-    } catch {
-      Alert.alert('Position', 'Impossible de récupérer ta position.');
+      setUploading(true);
+      setAvatarUrl(await uploadAvatar(id, uri));
+    } catch (e) {
+      Alert.alert('Photo', e instanceof Error ? e.message : 'Upload impossible — tu pourras réessayer plus tard.');
     } finally {
-      setLocating(false);
+      setUploading(false);
     }
   }
 
@@ -103,11 +123,15 @@ export default function OnboardingScreen() {
     if (!id) return;
     try {
       setSaving(true);
+      const display = `${firstName} ${lastName}`.trim() || name.trim() || 'Joueur';
       const patch: Parameters<typeof updateMyProfile>[1] = {
-        display_name: name.trim() || 'Joueur',
-        city: city.trim() || 'Paris',
-        play_style: style ?? 'Allround',
-        handedness: hand ?? 'Droitier',
+        display_name: display,
+        city: 'Paris',
+        country,
+        interests,
+        onboarded: true,
+        ...(playerType ? { player_type: playerType } : {}),
+        ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
       };
       if (fftt) {
         patch.fftt_id = fftt.numberId;
@@ -129,7 +153,9 @@ export default function OnboardingScreen() {
     }
   }
 
-  const startElo = fftt && (fftt.pointsOfficiels ?? fftt.pointsMensuels) ? ffttPointsToElo(fftt.pointsOfficiels ?? fftt.pointsMensuels!) : null;
+  const canNext =
+    step === 1 ? name.trim().length >= 2 : step === 4 ? (firstName.trim() || name.trim()).length >= 1 : true;
+  const startElo = fftt && (fftt.pointsOfficiels ?? fftt.pointsMensuels) ? ffttPointsToElo((fftt.pointsOfficiels ?? fftt.pointsMensuels)!) : null;
 
   return (
     <View style={styles.root}>
@@ -142,136 +168,183 @@ export default function OnboardingScreen() {
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           {step === 0 && (
-            <>
-              <ThemedText type="title">Comment tu t&apos;appelles ?</ThemedText>
-              <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
-                Licencié·e FFTT ? Choisis-toi dans la liste pour démarrer avec ton vrai classement.
+            <View style={styles.welcome}>
+              <View style={styles.logo}>
+                <Ionicons name="tennisball" size={48} color={Palette.evergreen} />
+              </View>
+              <ThemedText type="title" style={styles.welcomeTitle}>
+                Ping Pang Connect
               </ThemedText>
-              <TextInput
-                style={styles.input}
-                placeholder="Ton nom"
-                placeholderTextColor={Palette.grey}
-                value={name}
-                onChangeText={(t) => {
-                  setName(t);
-                  if (fftt) setFftt(null);
-                }}
-                autoFocus
-              />
-
-              {fftt ? (
-                <View style={styles.linked}>
-                  <Ionicons name="checkmark-circle" size={20} color={Palette.evergreen} />
-                  <View style={{ flex: 1 }}>
-                    <ThemedText type="cardTitle">Licence FFTT liée</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {fftt.club?.nom ?? ''}
-                      {fftt.pointsOfficiels != null ? ` · ${fftt.pointsOfficiels} pts` : ''}
-                      {startElo ? ` · ELO de départ ${startElo}` : ''}
-                    </ThemedText>
-                  </View>
-                  <Pressable onPress={() => setFftt(null)} hitSlop={8}>
-                    <ThemedText type="smallBold" themeColor="danger">
-                      Changer
-                    </ThemedText>
-                  </Pressable>
-                </View>
-              ) : (
-                <>
-                  {results.map((p) => (
-                    <Pressable key={p.numberId} style={styles.sugg} onPress={() => pickFftt(p)}>
-                      <View style={{ flex: 1 }}>
-                        <ThemedText type="cardTitle">
-                          {p.prenom} {p.nom}
-                        </ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {p.club?.nom ?? '—'}
-                          {p.pointsOfficiels != null ? ` · ${p.pointsOfficiels} pts` : ''}
-                        </ThemedText>
-                      </View>
-                      <Ionicons name="add-circle-outline" size={22} color={Palette.evergreen} />
-                    </Pressable>
-                  ))}
-                  {name.trim().length >= 2 && (
-                    <View style={styles.onlineRow}>
-                      <View style={styles.sexMini}>
-                        {(['Hommes', 'Femmes'] as const).map((s) => (
-                          <Pressable
-                            key={s}
-                            onPress={() => setSexe(s)}
-                            style={[styles.sexMiniPill, sexe === s ? styles.on : styles.off]}>
-                            <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>
-                              {s === 'Hommes' ? 'H' : 'F'}
-                            </ThemedText>
-                          </Pressable>
-                        ))}
-                      </View>
-                      <Pressable style={styles.onlineBtn} disabled={online} onPress={searchOnline}>
-                        {online ? (
-                          <ActivityIndicator color={Palette.onyx} />
-                        ) : (
-                          <ThemedText type="smallBold">Chercher sur FFTT</ThemedText>
-                        )}
-                      </Pressable>
-                    </View>
-                  )}
-                </>
-              )}
-            </>
+              <ThemedText type="default" themeColor="textSecondary" style={styles.welcomeSub}>
+                Rassemble les pongistes autour d&apos;une même table.
+              </ThemedText>
+            </View>
           )}
 
           {step === 1 && (
             <>
-              <ThemedText type="title">Tu joues où ?</ThemedText>
-              <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
-                Pour te trouver des joueurs et des tables près de toi.
-              </ThemedText>
-              <Pressable style={styles.geoBtn} disabled={locating} onPress={locate}>
-                {locating ? (
-                  <ActivityIndicator color={Palette.whitePP} />
-                ) : (
-                  <>
-                    <Ionicons name="location" size={20} color={Palette.whitePP} />
-                    <ThemedText type="cardTitle" themeColor="onBrand">
-                      Utiliser ma position
-                    </ThemedText>
-                  </>
-                )}
-              </Pressable>
+              <ThemedText type="title">Avant de commencer, comment doit-on t&apos;appeler ?</ThemedText>
               <TextInput
                 style={styles.input}
-                placeholder="Ou entre ta ville"
+                placeholder="Paul…"
                 placeholderTextColor={Palette.grey}
-                value={city}
-                onChangeText={setCity}
+                value={name}
+                onChangeText={setName}
+                autoFocus
               />
             </>
           )}
 
           {step === 2 && (
             <>
-              <ThemedText type="title">Tu es droitier ou gaucher ?</ThemedText>
-              <Chips options={HANDS} value={hand} onPick={setHand} />
+              <ThemedText type="title">Qu&apos;est-ce qui t&apos;intéresse le plus ?</ThemedText>
+              <View style={styles.list}>
+                {INTERESTS.map((i) => {
+                  const on = interests.includes(i);
+                  return (
+                    <Pressable key={i} onPress={() => toggleInterest(i)} style={[styles.choice, on ? styles.choiceOn : styles.choiceOff]}>
+                      <Ionicons
+                        name={on ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={22}
+                        color={on ? Palette.evergreen : Palette.grey}
+                      />
+                      <ThemedText type="cardTitle">{i}</ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </>
           )}
 
           {step === 3 && (
             <>
-              <ThemedText type="title">Ton style de jeu ?</ThemedText>
-              <Chips options={STYLES} value={style} onPick={setStyle} />
+              <ThemedText type="title">Quel genre de pongiste es-tu ?</ThemedText>
+              <View style={styles.list}>
+                {PLAYER_TYPES.map((t) => {
+                  const on = playerType === t.key;
+                  return (
+                    <Pressable
+                      key={t.key}
+                      onPress={() => setPlayerType(t.key)}
+                      style={[styles.typeCard, on ? styles.typeOn : styles.typeOff]}>
+                      <ThemedText type="cardTitle">{t.title}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {t.sub}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {playerType === 'licencie' ? (
+                <View style={styles.ffttBox}>
+                  {fftt ? (
+                    <View style={styles.linked}>
+                      <Ionicons name="checkmark-circle" size={20} color={Palette.evergreen} />
+                      <View style={{ flex: 1 }}>
+                        <ThemedText type="cardTitle">{fftt.prenom} {fftt.nom}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {fftt.club?.nom ?? ''}
+                          {fftt.pointsOfficiels != null ? ` · ${fftt.pointsOfficiels} pts` : ''}
+                          {startElo ? ` · ELO ${startElo}` : ''}
+                        </ThemedText>
+                      </View>
+                      <Pressable onPress={() => setFftt(null)} hitSlop={8}>
+                        <ThemedText type="smallBold" themeColor="danger">Changer</ThemedText>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Ton nom (licence FFTT)"
+                        placeholderTextColor={Palette.grey}
+                        value={name}
+                        onChangeText={setName}
+                      />
+                      {results.map((p) => (
+                        <Pressable key={p.numberId} style={styles.sugg} onPress={() => pickFftt(p)}>
+                          <View style={{ flex: 1 }}>
+                            <ThemedText type="cardTitle">{p.prenom} {p.nom}</ThemedText>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              {p.club?.nom ?? '—'}
+                              {p.pointsOfficiels != null ? ` · ${p.pointsOfficiels} pts` : ''}
+                            </ThemedText>
+                          </View>
+                          <Ionicons name="add-circle-outline" size={22} color={Palette.evergreen} />
+                        </Pressable>
+                      ))}
+                      {name.trim().length >= 2 ? (
+                        <View style={styles.onlineRow}>
+                          <View style={styles.sexMini}>
+                            {(['Hommes', 'Femmes'] as const).map((s) => (
+                              <Pressable key={s} onPress={() => setSexe(s)} style={[styles.sexMiniPill, sexe === s ? styles.on : styles.off]}>
+                                <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>{s === 'Hommes' ? 'H' : 'F'}</ThemedText>
+                              </Pressable>
+                            ))}
+                          </View>
+                          <Pressable style={styles.onlineBtn} disabled={online} onPress={searchOnline}>
+                            {online ? <ActivityIndicator color={Palette.onyx} /> : <ThemedText type="smallBold">Chercher sur FFTT</ThemedText>}
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </>
+                  )}
+                </View>
+              ) : null}
             </>
           )}
 
           {step === 4 && (
             <>
-              <ThemedText type="title">Qu&apos;est-ce qui t&apos;amène sur Ping Pang ?</ThemedText>
-              <Chips options={GOALS} value={goal} onPick={setGoal} />
+              <ThemedText type="title">Finalisons ton compte</ThemedText>
+              <Pressable style={styles.photo} onPress={pickPhoto}>
+                {photo ? (
+                  <Image source={{ uri: photo }} style={styles.photoImg} contentFit="cover" />
+                ) : uploading ? (
+                  <ActivityIndicator color={Palette.evergreen} />
+                ) : (
+                  <Ionicons name="add" size={28} color={Palette.grey} />
+                )}
+              </Pressable>
+              <ThemedText type="small" themeColor="textMuted" style={{ textAlign: 'center' }}>
+                {uploading ? 'Envoi…' : 'Photo (optionnel)'}
+              </ThemedText>
+
+              <TextInput style={styles.input} placeholder="Prénom" placeholderTextColor={Palette.grey} value={firstName} onChangeText={setFirstName} />
+              <TextInput style={styles.input} placeholder="Nom" placeholderTextColor={Palette.grey} value={lastName} onChangeText={setLastName} />
+              <View style={[styles.input, styles.readonly]}>
+                <ThemedText type="default" themeColor="textMuted">{session?.user?.email ?? 'E-mail'}</ThemedText>
+              </View>
+
+              <ThemedText type="smallBold" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>PAYS</ThemedText>
+              <View style={styles.countryRow}>
+                {COUNTRIES.map((c) => (
+                  <Pressable key={c} onPress={() => setCountry(c)} style={[styles.countryPill, country === c ? styles.on : styles.off]}>
+                    <ThemedText type="smallBold" themeColor={country === c ? 'onBrand' : 'text'}>{c}</ThemedText>
+                  </Pressable>
+                ))}
+              </View>
             </>
+          )}
+
+          {step === 5 && (
+            <View style={styles.welcome}>
+              <View style={styles.logo}>
+                <Ionicons name="happy" size={48} color={Palette.evergreen} />
+              </View>
+              <ThemedText type="title" style={styles.welcomeTitle}>
+                Bienvenue !
+              </ThemedText>
+              <ThemedText type="default" themeColor="textSecondary" style={styles.welcomeSub}>
+                Ton compte est prêt. Va t&apos;échauffer, c&apos;est bientôt à toi ! 🏓
+              </ThemedText>
+            </View>
           )}
         </ScrollView>
 
         <View style={styles.footer}>
-          {step > 0 ? (
+          {step > 0 && step < TOTAL - 1 ? (
             <Pressable style={styles.back} onPress={() => setStep(step - 1)}>
               <ThemedText type="cardTitle">Retour</ThemedText>
             </Pressable>
@@ -279,14 +352,14 @@ export default function OnboardingScreen() {
             <View style={{ flex: 1 }} />
           )}
           <Pressable
-            style={styles.next}
-            disabled={saving}
+            style={[styles.next, !canNext && { opacity: 0.5 }]}
+            disabled={saving || !canNext}
             onPress={() => (step < TOTAL - 1 ? setStep(step + 1) : finish())}>
             {saving ? (
               <ActivityIndicator color={Palette.whitePP} />
             ) : (
               <ThemedText type="cardTitle" themeColor="onBrand">
-                {step < TOTAL - 1 ? 'Continuer' : "C'est parti 🏓"}
+                {step === 0 ? 'Commencer' : step < TOTAL - 1 ? 'Continuer' : "Entrer dans l'app 🏓"}
               </ThemedText>
             )}
           </Pressable>
@@ -300,11 +373,14 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
   dots: { flexDirection: 'row', gap: Spacing.one, justifyContent: 'center', paddingTop: Spacing.three },
-  dot: { height: 4, borderRadius: 2, flex: 1, marginHorizontal: Spacing.three },
+  dot: { height: 4, borderRadius: 2, flex: 1, marginHorizontal: Spacing.two },
   dotOn: { backgroundColor: Palette.evergreen },
   dotOff: { backgroundColor: Palette.border },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.five, gap: Spacing.two },
-  sub: { marginTop: Spacing.one, marginBottom: Spacing.three },
+  welcome: { alignItems: 'center', paddingTop: Spacing.six, gap: Spacing.three },
+  logo: { width: 120, height: 120, borderRadius: 60, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
+  welcomeTitle: { textAlign: 'center', marginTop: Spacing.three },
+  welcomeSub: { textAlign: 'center' },
   input: {
     height: 54,
     borderRadius: Radius.sm,
@@ -315,18 +391,26 @@ const styles = StyleSheet.create({
     color: Palette.onyx,
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 16,
+    marginTop: Spacing.two,
   },
-  linked: {
-    marginTop: Spacing.three,
+  readonly: { justifyContent: 'center', backgroundColor: Palette.whitePP },
+  list: { gap: Spacing.two, marginTop: Spacing.three },
+  choice: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two,
-    backgroundColor: Palette.lime,
+    gap: Spacing.three,
+    padding: Spacing.four,
     borderRadius: Radius.sm,
-    padding: Spacing.three,
+    borderWidth: 1,
   },
+  choiceOn: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
+  choiceOff: { backgroundColor: Palette.white, borderColor: Palette.border },
+  typeCard: { padding: Spacing.four, borderRadius: Radius.sm, borderWidth: 1, gap: Spacing.half },
+  typeOn: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
+  typeOff: { backgroundColor: Palette.white, borderColor: Palette.border },
+  ffttBox: { marginTop: Spacing.three, gap: Spacing.two },
+  linked: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, backgroundColor: Palette.lime, borderRadius: Radius.sm, padding: Spacing.three },
   sugg: {
-    marginTop: Spacing.two,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
@@ -336,7 +420,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
-  onlineRow: { marginTop: Spacing.three, flexDirection: 'row', gap: Spacing.two, alignItems: 'center' },
+  onlineRow: { flexDirection: 'row', gap: Spacing.two, alignItems: 'center' },
   sexMini: { flexDirection: 'row', gap: Spacing.half },
   sexMiniPill: { width: 40, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
   onlineBtn: {
@@ -349,20 +433,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  geoBtn: {
-    height: 54,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
-    flexDirection: 'row',
+  photo: {
+    alignSelf: 'center',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.border,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.two,
-    marginBottom: Spacing.two,
+    marginTop: Spacing.four,
+    overflow: 'hidden',
   },
-  chips: { gap: Spacing.two, marginTop: Spacing.three },
-  chip: { paddingVertical: Spacing.four, borderRadius: Radius.sm, alignItems: 'center' },
-  chipOn: { backgroundColor: Palette.evergreen },
-  chipOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  photoImg: { width: 96, height: 96, borderRadius: 48 },
+  countryRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap', marginTop: Spacing.two },
+  countryPill: { paddingHorizontal: Spacing.four, paddingVertical: Spacing.three, borderRadius: Radius.xs },
   on: { backgroundColor: Palette.evergreen },
   off: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   footer: { flexDirection: 'row', gap: Spacing.two, padding: Spacing.four },

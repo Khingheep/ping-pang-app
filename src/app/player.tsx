@@ -79,7 +79,7 @@ export default function PlayerScreen() {
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <View style={styles.hero}>
-            <Avatar name={p?.display_name ?? '?'} size={96} />
+            <Avatar name={p?.display_name ?? '?'} size={96} uri={p?.avatar_url} />
             <ThemedText type="title" style={styles.name}>
               {p?.display_name ?? '—'}
             </ThemedText>

@@ -6,15 +6,19 @@ export type PlayerProfile = {
   id: string;
   handle: string;
   display_name: string;
+  avatar_url: string | null;
   city: string | null;
+  country: string | null;
   play_style: string | null;
   handedness: string | null;
+  player_type: string | null;
   fftt_id: string | null;
   fftt_points: number | null;
   elo: number;
   glicko_rd: number | null; // incertitude Glicko-2 (RD élevé = classement provisoire)
   level: string;
   is_premium: boolean;
+  onboarded: boolean;
   profile_public: boolean;
   stats_visible: boolean;
   visible_on_map: boolean;
@@ -59,7 +63,7 @@ export async function fetchMyProfile(userId: string): Promise<PlayerProfile | nu
   const { data } = await supabase
     .from('players')
     .select(
-      'id, handle, display_name, city, play_style, handedness, fftt_id, fftt_points, elo, glicko_rd, level, is_premium, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
+      'id, handle, display_name, avatar_url, city, country, play_style, handedness, player_type, fftt_id, fftt_points, elo, glicko_rd, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
     )
     .eq('id', userId)
     .maybeSingle();
@@ -77,13 +81,18 @@ export async function updateMyProfile(
   userId: string,
   patch: {
     display_name?: string;
+    avatar_url?: string;
     city?: string;
+    country?: string;
     play_style?: string;
     handedness?: string;
+    player_type?: string;
+    interests?: string[];
     fftt_id?: string;
     fftt_points?: number | null;
     elo?: number;
     level?: string;
+    onboarded?: boolean;
   },
 ): Promise<void> {
   // Quand on fixe l'ELO (lien FFTT à l'onboarding), on aligne le rating Glicko pour éviter

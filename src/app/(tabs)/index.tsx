@@ -106,7 +106,7 @@ export default function AccueilScreen() {
     <View style={styles.root}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
-          <Avatar name={name} size={72} color={Palette.purple} />
+          <Avatar name={name} size={72} color={Palette.purple} uri={profile?.avatar_url} />
           <View style={styles.headerText}>
             <ThemedText type="subtitle" themeColor="onBrand">
               {name}

@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           registerForPush(user.id).catch(() => {}); // no-op sur Expo Go
           return fetchMyProfile(user.id);
         })
-        .then((p) => setNeedsOnboarding(!p?.play_style))
+        .then((p) => setNeedsOnboarding(!p?.onboarded))
         .catch(() => {});
     } else {
       setNeedsOnboarding(false);
