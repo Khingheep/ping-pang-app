@@ -10,7 +10,7 @@ import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchFeed, type FeedEvent } from '@/lib/feed/feed';
 import { confirmMatch, disputeMatch, fetchPendingToConfirm, type PendingMatch } from '@/lib/matches/confirm';
-import { computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
+import { computeEloProgression, computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
 import { fetchLeaderboard, fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 import { unreadCount } from '@/lib/social/notifications';
 
@@ -56,10 +56,16 @@ export default function AccueilScreen() {
       setActingId(m.id);
       const r = await confirmMatch(m.id);
       load();
-      Alert.alert(
-        r.won ? 'Match confirmé — Victoire ! 🎉' : 'Match confirmé',
-        r.delta_me ? `${r.delta_me > 0 ? '+' : ''}${r.delta_me} ELO` : 'Match amical enregistré.',
-      );
+      router.push({
+        pathname: '/post-match',
+        params: {
+          matchId: m.id,
+          won: String(r.won),
+          delta: String(r.delta_me),
+          opponentName: m.proposerName,
+          score: m.myScore,
+        },
+      });
     } catch (e) {
       Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
@@ -91,6 +97,8 @@ export default function AccueilScreen() {
   const name = profile?.display_name ?? 'Joueur';
   const elo = profile?.elo ?? 1200;
   const stats = computeStats(matches);
+  const progression = computeEloProgression(matches);
+  const maxAbs = Math.max(1, ...progression.months.map((mm) => Math.abs(mm.delta)));
   // Les matchs en attente de MA confirmation sont déjà dans la section « À confirmer ».
   const recent = matches.filter((m) => !(m.status === 'pending' && !m.iProposed));
 
@@ -138,6 +146,36 @@ export default function AccueilScreen() {
             ))}
           </View>
 
+          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+            Progression ELO
+          </ThemedText>
+          <View style={styles.card}>
+            <ThemedText type="subtitle" themeColor={progression.thisMonth >= 0 ? 'brand' : 'textMuted'}>
+              {progression.thisMonth >= 0 ? '+' : ''}
+              {progression.thisMonth} ce mois
+            </ThemedText>
+            <View style={styles.eloChart}>
+              {progression.months.map((mm, i) => (
+                <View key={i} style={styles.eloCol}>
+                  <View style={styles.eloHalfTop}>
+                    {mm.delta >= 0 ? (
+                      <View style={{ width: '60%', height: Math.max(2, (mm.delta / maxAbs) * 36), backgroundColor: Palette.green, borderRadius: 2 }} />
+                    ) : null}
+                  </View>
+                  <View style={styles.eloBase} />
+                  <View style={styles.eloHalfBot}>
+                    {mm.delta < 0 ? (
+                      <View style={{ width: '60%', height: Math.max(2, (Math.abs(mm.delta) / maxAbs) * 36), backgroundColor: Palette.red, borderRadius: 2 }} />
+                    ) : null}
+                  </View>
+                  <ThemedText type="small" themeColor="textMuted" style={styles.eloLbl}>
+                    {mm.label}
+                  </ThemedText>
+                </View>
+              ))}
+            </View>
+          </View>
+
           {pending.length > 0 ? (
             <>
               <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
@@ -183,9 +221,18 @@ export default function AccueilScreen() {
             </>
           ) : null}
 
-          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-            Derniers matchs
-          </ThemedText>
+          <View style={styles.matchesHead}>
+            <ThemedText type="sectionTitle" themeColor="textSecondary">
+              Derniers matchs
+            </ThemedText>
+            {recent.length > 0 ? (
+              <Pressable onPress={() => router.push('/mes-matchs')}>
+                <ThemedText type="smallBold" themeColor="brand">
+                  Tous mes matchs
+                </ThemedText>
+              </Pressable>
+            ) : null}
+          </View>
           {recent.length === 0 ? (
             <View style={styles.card}>
               <ThemedText type="default" themeColor="textSecondary">
@@ -201,7 +248,14 @@ export default function AccueilScreen() {
                   <View key={m.id} style={styles.matchCard}>
                     <View style={[styles.matchBar, { backgroundColor: barColor }]} />
                     <View style={styles.matchMain}>
-                      <ThemedText type="cardTitle">vs {m.opponent}</ThemedText>
+                      <View style={styles.matchTitle}>
+                        <ThemedText type="cardTitle">vs {m.opponent}</ThemedText>
+                        <View style={styles.fmt}>
+                          <ThemedText type="small" themeColor="textSecondary">
+                            {m.format}
+                          </ThemedText>
+                        </View>
+                      </View>
                       <ThemedText type="small" themeColor="textSecondary">
                         {m.status === 'pending'
                           ? `${m.ranked ? 'Classé' : 'Amical'} · En attente de confirmation ⏳`
@@ -315,6 +369,28 @@ const styles = StyleSheet.create({
   },
   matchBar: { width: 5, alignSelf: 'stretch', borderTopLeftRadius: Radius.sm, borderBottomLeftRadius: Radius.sm },
   matchMain: { flex: 1, paddingLeft: Spacing.one },
+  matchTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  matchesHead: {
+    marginTop: Spacing.four,
+    marginBottom: Spacing.two,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  fmt: {
+    backgroundColor: Palette.whitePP,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+  },
+  eloChart: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.three, gap: Spacing.one },
+  eloCol: { flex: 1, alignItems: 'center' },
+  eloHalfTop: { height: 36, width: '100%', justifyContent: 'flex-end', alignItems: 'center' },
+  eloHalfBot: { height: 36, width: '100%', justifyContent: 'flex-start', alignItems: 'center' },
+  eloBase: { height: StyleSheet.hairlineWidth, width: '100%', backgroundColor: Palette.border },
+  eloLbl: { marginTop: Spacing.one, fontSize: 9 },
   confirmCard: {
     backgroundColor: Palette.white,
     borderWidth: 1,

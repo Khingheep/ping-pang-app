@@ -15,7 +15,18 @@ export type PlayerProfile = {
   glicko_rd: number | null; // incertitude Glicko-2 (RD élevé = classement provisoire)
   level: string;
   is_premium: boolean;
+  profile_public: boolean;
+  stats_visible: boolean;
+  visible_on_map: boolean;
+  share_elo: boolean;
+  notif_challenges: boolean;
+  notif_results: boolean;
 };
+
+export type AccountPrefs = Pick<
+  PlayerProfile,
+  'profile_public' | 'stats_visible' | 'visible_on_map' | 'share_elo' | 'notif_challenges' | 'notif_results'
+>;
 
 export type LeaderboardEntry = {
   id: string;
@@ -47,10 +58,18 @@ export async function ensurePlayerProfile(user: User): Promise<void> {
 export async function fetchMyProfile(userId: string): Promise<PlayerProfile | null> {
   const { data } = await supabase
     .from('players')
-    .select('id, handle, display_name, city, play_style, handedness, fftt_id, fftt_points, elo, glicko_rd, level, is_premium')
+    .select(
+      'id, handle, display_name, city, play_style, handedness, fftt_id, fftt_points, elo, glicko_rd, level, is_premium, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
+    )
     .eq('id', userId)
     .maybeSingle();
   return (data as PlayerProfile | null) ?? null;
+}
+
+/** Met à jour les préférences (confidentialité / notifications). */
+export async function updatePrefs(userId: string, patch: Partial<AccountPrefs>): Promise<void> {
+  const { error } = await supabase.from('players').update(patch).eq('id', userId);
+  if (error) throw error;
 }
 
 /** Met à jour son propre profil (RLS : auth.uid() = id). */
