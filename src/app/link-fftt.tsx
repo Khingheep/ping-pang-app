@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -18,11 +18,14 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { linkFfttToProfile, searchFftt, searchFfttLocal, type FfttPlayer } from '@/lib/fftt/link';
+import { setPendingFftt } from '@/lib/fftt/pending';
 
 const SEXES: ('Hommes' | 'Femmes')[] = ['Hommes', 'Femmes'];
 
 export default function LinkFfttScreen() {
   const { session } = useAuth();
+  const { onboarding } = useLocalSearchParams<{ onboarding?: string }>();
+  const isOnboarding = onboarding === '1';
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>('Hommes');
@@ -60,6 +63,12 @@ export default function LinkFfttScreen() {
   }
 
   async function link(p: FfttPlayer) {
+    if (isOnboarding) {
+      // Pendant l'onboarding : on renvoie le choix, le profil sera créé à la fin.
+      setPendingFftt(p);
+      router.back();
+      return;
+    }
     const id = session?.user?.id;
     if (!id) return;
     try {
@@ -82,7 +91,7 @@ export default function LinkFfttScreen() {
           <Pressable onPress={() => router.back()} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
-          <ThemedText type="cardTitle">Lier mon compte FFTT</ThemedText>
+          <ThemedText type="cardTitle">{isOnboarding ? 'Trouver ma licence FFTT' : 'Lier mon compte FFTT'}</ThemedText>
           <View style={{ width: 26 }} />
         </View>
 
@@ -137,7 +146,7 @@ export default function LinkFfttScreen() {
                     <ActivityIndicator color={Palette.onyx} />
                   ) : (
                     <ThemedText type="smallBold" themeColor="brand">
-                      Lier
+                      {isOnboarding ? 'Choisir' : 'Lier'}
                     </ThemedText>
                   )}
                 </Pressable>

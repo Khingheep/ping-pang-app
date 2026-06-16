@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -10,7 +10,8 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { ffttPointsToElo, levelForElo } from '@/lib/elo';
-import { searchFftt, searchFfttLocal, type FfttPlayer } from '@/lib/fftt/link';
+import { type FfttPlayer } from '@/lib/fftt/link';
+import { takePendingFftt } from '@/lib/fftt/pending';
 import { uploadAvatar } from '@/lib/players/avatar';
 import { upsertOnboarding } from '@/lib/players/profile';
 
@@ -42,11 +43,8 @@ export default function OnboardingScreen() {
   const [interests, setInterests] = useState<string[]>([]);
   const [playerType, setPlayerType] = useState<string | null>(null);
 
-  // FFTT (si licencié)
+  // FFTT (si licencié) — la recherche se fait sur un écran dédié
   const [fftt, setFftt] = useState<FfttPlayer | null>(null);
-  const [results, setResults] = useState<FfttPlayer[]>([]);
-  const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>('Hommes');
-  const [online, setOnline] = useState(false);
 
   // finalisation
   const [firstName, setFirstName] = useState('');
@@ -57,14 +55,18 @@ export default function OnboardingScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // typeahead FFTT local
-  useEffect(() => {
-    if (playerType !== 'licencie' || fftt) return;
-    const t = setTimeout(() => {
-      if (name.trim().length >= 2) searchFfttLocal({ nom: name }).then(setResults).catch(() => {});
-    }, 250);
-    return () => clearTimeout(t);
-  }, [name, playerType, fftt]);
+  // Au retour de l'écran de recherche FFTT : récupère le joueur choisi.
+  useFocusEffect(
+    useCallback(() => {
+      const p = takePendingFftt();
+      if (p) {
+        setFftt(p);
+        setPlayerType('licencie');
+        setFirstName((cur) => cur || p.prenom || '');
+        setLastName((cur) => cur || p.nom || '');
+      }
+    }, []),
+  );
 
   // pré-remplit le prénom à l'arrivée sur la finalisation
   useEffect(() => {
@@ -73,23 +75,6 @@ export default function OnboardingScreen() {
 
   function toggleInterest(i: string) {
     setInterests((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
-  }
-
-  function pickFftt(p: FfttPlayer) {
-    setFftt(p);
-    setName(`${p.prenom} ${p.nom}`);
-    setResults([]);
-  }
-  async function searchOnline() {
-    if (name.trim().length < 2) return;
-    try {
-      setOnline(true);
-      setResults(await searchFftt({ nom: name.trim(), sexe }));
-    } catch (e) {
-      Alert.alert('FFTT', e instanceof Error ? e.message : 'Recherche impossible.');
-    } finally {
-      setOnline(false);
-    }
   }
 
   async function pickPhoto() {
@@ -266,41 +251,12 @@ export default function OnboardingScreen() {
                       </Pressable>
                     </View>
                   ) : (
-                    <>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Ton nom (licence FFTT)"
-                        placeholderTextColor={Palette.grey}
-                        value={name}
-                        onChangeText={setName}
-                      />
-                      {results.map((p) => (
-                        <Pressable key={p.numberId} style={styles.sugg} onPress={() => pickFftt(p)}>
-                          <View style={{ flex: 1 }}>
-                            <ThemedText type="cardTitle">{p.prenom} {p.nom}</ThemedText>
-                            <ThemedText type="small" themeColor="textSecondary">
-                              {p.club?.nom ?? '—'}
-                              {p.pointsOfficiels != null ? ` · ${p.pointsOfficiels} pts` : ''}
-                            </ThemedText>
-                          </View>
-                          <Ionicons name="add-circle-outline" size={22} color={Palette.evergreen} />
-                        </Pressable>
-                      ))}
-                      {name.trim().length >= 2 ? (
-                        <View style={styles.onlineRow}>
-                          <View style={styles.sexMini}>
-                            {(['Hommes', 'Femmes'] as const).map((s) => (
-                              <Pressable key={s} onPress={() => setSexe(s)} style={[styles.sexMiniPill, sexe === s ? styles.on : styles.off]}>
-                                <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>{s === 'Hommes' ? 'H' : 'F'}</ThemedText>
-                              </Pressable>
-                            ))}
-                          </View>
-                          <Pressable style={styles.onlineBtn} disabled={online} onPress={searchOnline}>
-                            {online ? <ActivityIndicator color={Palette.onyx} /> : <ThemedText type="smallBold">Chercher sur FFTT</ThemedText>}
-                          </Pressable>
-                        </View>
-                      ) : null}
-                    </>
+                    <Pressable style={styles.ffttBtn} onPress={() => router.push('/link-fftt?onboarding=1')}>
+                      <Ionicons name="search" size={18} color={Palette.evergreen} />
+                      <ThemedText type="cardTitle" themeColor="brand">
+                        Trouver ma licence sur FFTT
+                      </ThemedText>
+                    </Pressable>
                   )}
                 </View>
               ) : null}
@@ -443,6 +399,17 @@ const styles = StyleSheet.create({
   typeOn: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
   typeOff: { backgroundColor: Palette.white, borderColor: Palette.border },
   ffttBox: { marginTop: Spacing.three, gap: Spacing.two },
+  ffttBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    height: 52,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.evergreen,
+  },
   linked: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, backgroundColor: Palette.lime, borderRadius: Radius.sm, padding: Spacing.three },
   sugg: {
     flexDirection: 'row',

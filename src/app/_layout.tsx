@@ -22,9 +22,10 @@ function RootNavigator() {
     if (!isSupabaseConfigured) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    // Routes accessibles sans session : onboarding (l'inscription se fait à la fin) + sa recherche FFTT.
     const inOnboarding = segments[0] === 'onboarding';
-    // L'onboarding est accessible hors session (l'inscription se fait à la fin du flow).
-    if (!session && !inAuthGroup && !inOnboarding) {
+    const publicRoute = inOnboarding || segments[0] === 'link-fftt';
+    if (!session && !inAuthGroup && !publicRoute) {
       router.replace('/login');
     } else if (session && inAuthGroup) {
       router.replace('/');
