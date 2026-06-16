@@ -22,6 +22,7 @@ export default function CarteScreen() {
   const [events, setEvents] = useState<EventPP[]>([]);
   const [filter, setFilter] = useState(0);
   const mapRef = useRef<VenueMapHandle>(null);
+  const filterRef = useRef(0); // évite une closure obsolète dans onMapReady
 
   useFocusEffect(
     useCallback(() => {
@@ -30,8 +31,17 @@ export default function CarteScreen() {
     }, []),
   );
 
-  // La map affiche tous les lieux ; le filtre n'agit que sur la liste.
   const filtered = venues.filter((v) => (filter === 0 ? true : filter === 1 ? v.indoor : v.indoor === false));
+
+  // Le filtre agit sur la liste ET sur la map (masque/affiche les marqueurs, sans recharger).
+  const selectFilter = useCallback((i: number) => {
+    filterRef.current = i;
+    setFilter(i);
+    mapRef.current?.applyFilter(i);
+  }, []);
+
+  // À chaque (re)chargement de la map, on ré-applique le filtre courant.
+  const onMapReady = useCallback(() => mapRef.current?.applyFilter(filterRef.current), []);
 
   const focusVenue = useCallback((v: Venue) => {
     if (v.lat == null || v.lng == null) return;
@@ -49,13 +59,13 @@ export default function CarteScreen() {
         </View>
 
         <View style={styles.mapWrap}>
-          <VenueMap ref={mapRef} venues={venues} />
+          <VenueMap ref={mapRef} venues={venues} onReady={onMapReady} />
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <View style={styles.filters}>
             {FILTERS.map((f, i) => (
-              <PressablePill key={f} active={filter === i} label={f} onPress={() => setFilter(i)} />
+              <PressablePill key={f} active={filter === i} label={f} onPress={() => selectFilter(i)} />
             ))}
           </View>
 

@@ -26,15 +26,24 @@ export function mapHtml(venues: Venue[]): string {
   var map = L.map('map',{zoomControl:false,attributionControl:true}).setView([${PARIS.lat},${PARIS.lng}],12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   var pts = ${data};
-  var markers = {}, bounds = [];
+  var markers = {}, all = [], bounds = [];
   pts.forEach(function(p){
     var m = L.circleMarker([p.lat,p.lng],{radius:9,weight:2,color:'${Palette.evergreen}',
       fillColor:p.indoor?'${Palette.blue}':'${Palette.lime}',fillOpacity:1}).addTo(map);
     m.bindPopup('<b>'+p.name+'</b>'+(p.address?'<br>'+p.address:''));
     m.on('click',function(){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(p.id); });
-    markers[p.id]=m; bounds.push([p.lat,p.lng]);
+    markers[p.id]=m; all.push({m:m,indoor:p.indoor}); bounds.push([p.lat,p.lng]);
   });
   if(bounds.length) map.fitBounds(bounds,{padding:[36,36],maxZoom:14});
   window.__focus=function(id){ var m=markers[id]; if(m){ map.flyTo(m.getLatLng(),15,{duration:.6}); m.openPopup(); } };
+  // mode: 0=tout, 1=intérieur, 2=extérieur — masque/affiche les marqueurs sans recharger.
+  window.__filter=function(mode){
+    var vis=[];
+    all.forEach(function(o){
+      var show = mode===0 || (mode===1 && o.indoor) || (mode===2 && !o.indoor);
+      if(show){ o.m.addTo(map); vis.push(o.m.getLatLng()); } else { map.removeLayer(o.m); }
+    });
+    if(vis.length) map.fitBounds(vis,{padding:[36,36],maxZoom:14});
+  };
 </script></body></html>`;
 }
