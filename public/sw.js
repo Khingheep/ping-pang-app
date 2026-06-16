@@ -2,7 +2,7 @@
    - navigations : réseau d'abord, fallback index.html (SPA expo-router)
    - assets same-origin : cache d'abord
    - Supabase / tuiles OSM / Expo Push : jamais interceptés (cross-origin) */
-const CACHE = 'ppp-v1';
+const CACHE = 'ppp-v2';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/index.html', '/manifest.json'])).catch(() => {}));
