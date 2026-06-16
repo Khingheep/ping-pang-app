@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,8 +20,7 @@ import { type AuthProviderId, useAuth } from '@/lib/auth/auth-provider';
 
 // Aligné sur le Figma « ON-01 · Welcome » (Ping Pang Connect), mode clair.
 export default function LoginScreen() {
-  const { signIn, signInWithEmail, signUpWithEmail } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const { signIn, signInWithEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -33,17 +33,7 @@ export default function LoginScreen() {
     }
     try {
       setBusy(true);
-      if (mode === 'signin') {
-        await signInWithEmail(email.trim(), password);
-      } else {
-        const hasSession = await signUpWithEmail(email.trim(), password);
-        // Session immédiate (confirmation email désactivée) → le RootNavigator
-        // redirige automatiquement vers /onboarding (player.onboarded = false).
-        if (!hasSession) {
-          Alert.alert('Vérifie tes emails', 'Confirme ton adresse pour activer ton compte, puis connecte-toi.');
-          setMode('signin');
-        }
-      }
+      await signInWithEmail(email.trim(), password);
     } catch (e) {
       Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
@@ -108,14 +98,14 @@ export default function LoginScreen() {
                 <ActivityIndicator color={Palette.whitePP} />
               ) : (
                 <ThemedText type="cardTitle" themeColor="onBrand">
-                  {mode === 'signin' ? 'Se connecter' : 'Créer mon compte'}
+                  Se connecter
                 </ThemedText>
               )}
             </Pressable>
 
-            <Pressable onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}>
+            <Pressable onPress={() => router.push('/onboarding')}>
               <ThemedText type="link" themeColor="text" style={styles.toggle}>
-                {mode === 'signin' ? 'Pas de compte ? Créer un compte' : 'Déjà un compte ? Se connecter'}
+                Pas de compte ? Créer un compte
               </ThemedText>
             </Pressable>
 

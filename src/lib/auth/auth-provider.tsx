@@ -3,7 +3,7 @@ import { makeRedirectUri } from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ensurePlayerProfile, fetchMyProfile } from '@/lib/players/profile';
 import { registerForPush } from '@/lib/push/register';
@@ -19,8 +19,8 @@ type AuthContextValue = {
   loading: boolean;
   signIn: (provider: AuthProviderId) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
-  /** Retourne true si une session est ouverte immédiatement (confirmation email désactivée). */
-  signUpWithEmail: (email: string, password: string) => Promise<boolean>;
+  /** Crée le compte et retourne l'id du user si une session est ouverte (confirmation email off), sinon null. */
+  signUpWithEmail: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   needsOnboarding: boolean;
   markOnboarded: () => void;
@@ -45,6 +45,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  // Une fois l'onboarding terminé localement, empêche l'effet auth de re-déclencher l'onboarding.
+  const onboardedRef = useRef(false);
 
   // État de session initial + abonnement aux changements.
   useEffect(() => {
@@ -81,7 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           registerForPush(user.id).catch(() => {}); // no-op sur Expo Go
           return fetchMyProfile(user.id);
         })
-        .then((p) => setNeedsOnboarding(!p?.onboarded))
+        .then((p) => {
+          if (!onboardedRef.current) setNeedsOnboarding(!p?.onboarded);
+        })
         .catch(() => {});
     } else {
       setNeedsOnboarding(false);
@@ -113,13 +117,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async signUpWithEmail(email, password) {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        return !!data.session; // session immédiate si la confirmation email est désactivée
+        return data.session ? (data.user?.id ?? null) : null; // session immédiate si confirmation off
       },
       async signOut() {
+        onboardedRef.current = false;
         await supabase.auth.signOut();
       },
       needsOnboarding,
       markOnboarded() {
+        onboardedRef.current = true;
         setNeedsOnboarding(false);
       },
     }),

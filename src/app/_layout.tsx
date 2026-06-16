@@ -23,7 +23,8 @@ function RootNavigator() {
 
     const inAuthGroup = segments[0] === '(auth)';
     const inOnboarding = segments[0] === 'onboarding';
-    if (!session && !inAuthGroup) {
+    // L'onboarding est accessible hors session (l'inscription se fait à la fin du flow).
+    if (!session && !inAuthGroup && !inOnboarding) {
       router.replace('/login');
     } else if (session && inAuthGroup) {
       router.replace('/');

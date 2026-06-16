@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { ffttPointsToElo, levelForElo } from '@/lib/elo';
 import { searchFftt, searchFfttLocal, type FfttPlayer } from '@/lib/fftt/link';
 import { uploadAvatar } from '@/lib/players/avatar';
-import { updateMyProfile } from '@/lib/players/profile';
+import { upsertOnboarding } from '@/lib/players/profile';
 
 const TOTAL = 6;
 
@@ -34,7 +34,7 @@ const PLAYER_TYPES = [
 const COUNTRIES = ['France', 'Belgique', 'Suisse', 'Autre'];
 
 export default function OnboardingScreen() {
-  const { session, markOnboarded } = useAuth();
+  const { session, signUpWithEmail, markOnboarded } = useAuth();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
 
@@ -53,8 +53,9 @@ export default function OnboardingScreen() {
   const [lastName, setLastName] = useState('');
   const [country, setCountry] = useState('France');
   const [photo, setPhoto] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  // identifiants de compte (collectés ici si pas encore connecté)
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   // typeahead FFTT local
   useEffect(() => {
@@ -92,8 +93,6 @@ export default function OnboardingScreen() {
   }
 
   async function pickPhoto() {
-    const id = session?.user?.id;
-    if (!id) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       Alert.alert('Photo', 'Autorise l’accès aux photos pour ajouter un avatar.');
@@ -106,32 +105,39 @@ export default function OnboardingScreen() {
       quality: 0.6,
     });
     if (res.canceled || !res.assets[0]) return;
-    const uri = res.assets[0].uri;
-    setPhoto(uri);
-    try {
-      setUploading(true);
-      setAvatarUrl(await uploadAvatar(id, uri));
-    } catch (e) {
-      Alert.alert('Photo', e instanceof Error ? e.message : 'Upload impossible — tu pourras réessayer plus tard.');
-    } finally {
-      setUploading(false);
-    }
+    setPhoto(res.assets[0].uri); // upload différé à la fin (après création du compte)
   }
 
   async function finish() {
-    const id = session?.user?.id;
-    if (!id) return;
     try {
       setSaving(true);
+      // Crée le compte si on n'est pas déjà connecté (l'inscription se fait ICI, à la fin).
+      let uid = session?.user?.id ?? null;
+      const mail = session?.user?.email ?? email.trim();
+      if (!uid) {
+        uid = await signUpWithEmail(email.trim(), password);
+        if (!uid) {
+          Alert.alert('Inscription', 'Impossible de créer le compte (email déjà utilisé ?).');
+          return;
+        }
+      }
+      // Upload de la photo maintenant qu'on est authentifié.
+      let avatar: string | undefined;
+      if (photo) {
+        try {
+          avatar = await uploadAvatar(uid, photo);
+        } catch {
+          /* photo optionnelle */
+        }
+      }
       const display = `${firstName} ${lastName}`.trim() || name.trim() || 'Joueur';
-      const patch: Parameters<typeof updateMyProfile>[1] = {
+      const patch: Parameters<typeof upsertOnboarding>[2] = {
         display_name: display,
         city: 'Paris',
         country,
         interests,
-        onboarded: true,
         ...(playerType ? { player_type: playerType } : {}),
-        ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+        ...(avatar ? { avatar_url: avatar } : {}),
       };
       if (fftt) {
         patch.fftt_id = fftt.numberId;
@@ -143,7 +149,7 @@ export default function OnboardingScreen() {
           patch.level = levelForElo(e).key;
         }
       }
-      await updateMyProfile(id, patch);
+      await upsertOnboarding(uid, mail, patch);
       markOnboarded();
       router.replace('/');
     } catch (e) {
@@ -153,8 +159,14 @@ export default function OnboardingScreen() {
     }
   }
 
+  // À la finalisation, si pas connecté, l'email + un mot de passe ≥ 6 sont requis.
+  const accountOk = !!session || (/.+@.+\..+/.test(email.trim()) && password.length >= 6);
   const canNext =
-    step === 1 ? name.trim().length >= 2 : step === 4 ? (firstName.trim() || name.trim()).length >= 1 : true;
+    step === 1
+      ? name.trim().length >= 2
+      : step === 4
+        ? (firstName.trim() || name.trim()).length >= 1 && accountOk
+        : true;
   const startElo = fftt && (fftt.pointsOfficiels ?? fftt.pointsMensuels) ? ffttPointsToElo((fftt.pointsOfficiels ?? fftt.pointsMensuels)!) : null;
 
   return (
@@ -301,21 +313,43 @@ export default function OnboardingScreen() {
               <Pressable style={styles.photo} onPress={pickPhoto}>
                 {photo ? (
                   <Image source={{ uri: photo }} style={styles.photoImg} contentFit="cover" />
-                ) : uploading ? (
-                  <ActivityIndicator color={Palette.evergreen} />
                 ) : (
                   <Ionicons name="add" size={28} color={Palette.grey} />
                 )}
               </Pressable>
               <ThemedText type="small" themeColor="textMuted" style={{ textAlign: 'center' }}>
-                {uploading ? 'Envoi…' : 'Photo (optionnel)'}
+                Photo (optionnel)
               </ThemedText>
 
               <TextInput style={styles.input} placeholder="Prénom" placeholderTextColor={Palette.grey} value={firstName} onChangeText={setFirstName} />
               <TextInput style={styles.input} placeholder="Nom" placeholderTextColor={Palette.grey} value={lastName} onChangeText={setLastName} />
-              <View style={[styles.input, styles.readonly]}>
-                <ThemedText type="default" themeColor="textMuted">{session?.user?.email ?? 'E-mail'}</ThemedText>
-              </View>
+              {session?.user?.email ? (
+                <View style={[styles.input, styles.readonly]}>
+                  <ThemedText type="default" themeColor="textMuted">{session.user.email}</ThemedText>
+                </View>
+              ) : (
+                <>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="E-mail"
+                    placeholderTextColor={Palette.grey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    value={email}
+                    onChangeText={setEmail}
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Mot de passe (min. 6 caractères)"
+                    placeholderTextColor={Palette.grey}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    value={password}
+                    onChangeText={setPassword}
+                  />
+                </>
+              )}
 
               <ThemedText type="smallBold" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>PAYS</ThemedText>
               <View style={styles.countryRow}>

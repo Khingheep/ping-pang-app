@@ -70,6 +70,36 @@ export async function fetchMyProfile(userId: string): Promise<PlayerProfile | nu
   return (data as PlayerProfile | null) ?? null;
 }
 
+/**
+ * Crée (ou met à jour) la ligne joueur en fin d'onboarding. Robuste au cas où la ligne
+ * n'existe pas encore (inscription tout juste faite). Marque `onboarded = true`.
+ */
+export async function upsertOnboarding(
+  userId: string,
+  email: string,
+  patch: {
+    display_name: string;
+    avatar_url?: string;
+    city?: string;
+    country?: string;
+    player_type?: string;
+    interests?: string[];
+    fftt_id?: string;
+    fftt_points?: number | null;
+    elo?: number;
+    level?: string;
+  },
+): Promise<void> {
+  const handle = (email.split('@')[0] ?? 'joueur').toLowerCase().replace(/[^a-z0-9_]/g, '') || 'joueur';
+  const row: Record<string, unknown> = { id: userId, handle, onboarded: true, ...patch };
+  if (patch.elo !== undefined) {
+    row.glicko_rating = patch.elo;
+    if (patch.fftt_points != null) row.glicko_rd = 100;
+  }
+  const { error } = await supabase.from('players').upsert(row, { onConflict: 'id' });
+  if (error) throw error;
+}
+
 /** Met à jour les préférences (confidentialité / notifications). */
 export async function updatePrefs(userId: string, patch: Partial<AccountPrefs>): Promise<void> {
   const { error } = await supabase.from('players').update(patch).eq('id', userId);
