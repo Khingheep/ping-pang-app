@@ -20,7 +20,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { countSets, formatSetScores, parseSetScores, validateMatch, type SetScore } from '@/lib/matches/sets';
+import { fetchLeaderboard, type LeaderboardEntry } from '@/lib/players/profile';
 import {
+  addPlayersToTournament,
   computePouleStandings,
   fetchTournamentDetail,
   recordTournamentMatch,
@@ -52,6 +54,9 @@ export default function TournoiScreen() {
   const [busy, setBusy] = useState(false);
   const [scoring, setScoring] = useState<TournamentMatch | null>(null);
   const [sets, setSets] = useState<SetInput[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [candidates, setCandidates] = useState<LeaderboardEntry[]>([]);
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
 
   const load = useCallback(() => {
     if (id) fetchTournamentDetail(id).then(setDetail);
@@ -84,6 +89,29 @@ export default function TournoiScreen() {
   }
 
   const bestOf = TOURNAMENT_FORMATS[tournament.format]?.bestOf ?? 5;
+
+  async function openAddPlayers() {
+    setPicked({});
+    setAddOpen(true);
+    const all = await fetchLeaderboard(200);
+    const already = new Set(players.map((p) => p.player_id));
+    setCandidates(all.filter((p) => !already.has(p.id)));
+  }
+
+  async function confirmAddPlayers() {
+    const ids = Object.keys(picked).filter((k) => picked[k]);
+    if (!ids.length) return setAddOpen(false);
+    try {
+      setBusy(true);
+      await addPlayersToTournament(tournament.id, ids);
+      setAddOpen(false);
+      load();
+    } catch (e) {
+      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function openScore(m: TournamentMatch) {
     if (!m.player_a || !m.player_b) return; // bye / slot vide
@@ -178,9 +206,19 @@ export default function TournoiScreen() {
           {/* ───────── Inscriptions ───────── */}
           {tournament.status === 'open' ? (
             <>
-              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Inscrits ({players.length})
-              </ThemedText>
+              <View style={styles.sectionRow}>
+                <ThemedText type="sectionTitle" themeColor="textSecondary">
+                  Inscrits ({players.length}/{tournament.max_players})
+                </ThemedText>
+                {isOwner && players.length < tournament.max_players ? (
+                  <Pressable style={styles.addBtn} onPress={openAddPlayers}>
+                    <Ionicons name="person-add" size={16} color={Palette.evergreen} />
+                    <ThemedText type="smallBold" themeColor="brand">
+                      Ajouter
+                    </ThemedText>
+                  </Pressable>
+                ) : null}
+              </View>
               <View style={styles.list}>
                 {players.map((p) => (
                   <View key={p.player_id} style={styles.row}>
@@ -309,6 +347,61 @@ export default function TournoiScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* Ajouter des joueurs (organisateur) */}
+        <Modal visible={addOpen} transparent animationType="slide" onRequestClose={() => setAddOpen(false)}>
+          <View style={styles.modalRoot}>
+            <View style={[styles.modalCard, styles.addCard]}>
+              <View style={styles.modalHead}>
+                <ThemedText type="cardTitle">Ajouter des joueurs</ThemedText>
+                <Pressable onPress={() => setAddOpen(false)} hitSlop={10}>
+                  <Ionicons name="close" size={24} color={Palette.onyx} />
+                </Pressable>
+              </View>
+              <ScrollView style={styles.addList} keyboardShouldPersistTaps="handled">
+                {candidates.length === 0 ? (
+                  <ThemedText type="default" themeColor="textSecondary" style={{ paddingVertical: Spacing.three }}>
+                    Aucun autre joueur à ajouter.
+                  </ThemedText>
+                ) : (
+                  candidates.map((c) => {
+                    const on = !!picked[c.id];
+                    const full = players.length + Object.values(picked).filter(Boolean).length >= tournament.max_players;
+                    return (
+                      <Pressable
+                        key={c.id}
+                        disabled={!on && full}
+                        onPress={() => setPicked((s) => ({ ...s, [c.id]: !s[c.id] }))}
+                        style={[styles.addRow, (!on && full) && { opacity: 0.4 }]}>
+                        <Avatar name={c.display_name} size={36} />
+                        <ThemedText type="cardTitle" style={{ flex: 1 }} numberOfLines={1}>
+                          {c.display_name}
+                        </ThemedText>
+                        <ThemedText type="smallBold" themeColor="textSecondary">
+                          {c.elo}
+                        </ThemedText>
+                        <Ionicons
+                          name={on ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={22}
+                          color={on ? Palette.evergreen : Palette.border}
+                        />
+                      </Pressable>
+                    );
+                  })
+                )}
+              </ScrollView>
+              <Pressable style={[styles.cta, busy && { opacity: 0.6 }]} disabled={busy} onPress={confirmAddPlayers}>
+                {busy ? (
+                  <ActivityIndicator color={Palette.whitePP} />
+                ) : (
+                  <ThemedText type="cardTitle" themeColor="onBrand">
+                    Ajouter ({Object.values(picked).filter(Boolean).length})
+                  </ThemedText>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </View>
   );
@@ -393,6 +486,19 @@ const styles = StyleSheet.create({
   championCard: { alignItems: 'center', gap: Spacing.two, marginTop: Spacing.four, paddingVertical: Spacing.four },
 
   section: { marginTop: Spacing.four, marginBottom: Spacing.two },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.four, marginBottom: Spacing.two },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    backgroundColor: Palette.lime,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  addCard: { maxHeight: '80%' },
+  addList: { maxHeight: 380 },
+  addRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.two },
   list: { gap: Spacing.two },
   row: {
     flexDirection: 'row',

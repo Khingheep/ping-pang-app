@@ -191,6 +191,18 @@ export async function joinTournamentByCode(playerId: string, rawCode: string): P
   return tournament.id;
 }
 
+/** L'organisateur inscrit directement des joueurs existants (sans code). RLS : owner only. */
+export async function addPlayersToTournament(tournamentId: string, playerIds: string[]): Promise<void> {
+  if (!playerIds.length) return;
+  const { error } = await supabase
+    .from('tournament_players')
+    .upsert(
+      playerIds.map((player_id) => ({ tournament_id: tournamentId, player_id })),
+      { onConflict: 'tournament_id,player_id', ignoreDuplicates: true },
+    );
+  if (error) throw error;
+}
+
 // ───────────────────────── Génération des poules ─────────────────────────
 
 /** Lance le tournoi : assigne les poules + crée tous les matchs round-robin. */
