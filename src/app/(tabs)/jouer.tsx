@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { type Href, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -10,7 +10,7 @@ import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchOtherPlayers, type LeaderboardEntry } from '@/lib/players/profile';
 import { fetchIncomingChallenges, respondChallenge, type Challenge } from '@/lib/social/challenges';
-import { fetchMyTournaments, type Tournament } from '@/lib/tournaments/tournaments';
+import { fetchMyTournaments, joinTournamentByCode, type Tournament } from '@/lib/tournaments/tournaments';
 
 const T_STATUS: Record<string, string> = {
   open: 'Inscriptions ouvertes',
@@ -25,6 +25,8 @@ export default function DefisScreen() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [query, setQuery] = useState('');
   const [challenges, setChallenges] = useState<Challenge[]>([]);
+  const [code, setCode] = useState('');
+  const [joining, setJoining] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -54,6 +56,21 @@ export default function DefisScreen() {
     setChallenges((prev) => prev.filter((x) => x.id !== c.id));
   }
 
+  async function joinByCode() {
+    const me = session?.user?.id;
+    if (!me || !code.trim()) return;
+    try {
+      setJoining(true);
+      const tid = await joinTournamentByCode(me, code);
+      setCode('');
+      router.push({ pathname: '/tournoi', params: { id: tid } });
+    } catch (e) {
+      Alert.alert('Code invalide', e instanceof Error ? e.message : 'Réessaie.');
+    } finally {
+      setJoining(false);
+    }
+  }
+
   const q = query.trim().toLowerCase();
   const filtered = players.filter((p) => p.display_name.toLowerCase().includes(q));
 
@@ -63,12 +80,33 @@ export default function DefisScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Défis</ThemedText>
 
-          <Pressable style={styles.tournoiBtn} onPress={() => router.push('/tournoi-new' as Href)}>
-            <Ionicons name="trophy" size={18} color={Palette.evergreen} />
-            <ThemedText type="smallBold" themeColor="brand">
-              Créer un tournoi
-            </ThemedText>
-          </Pressable>
+          <View style={styles.tournRow}>
+            <Pressable style={styles.tournoiBtn} onPress={() => router.push('/tournoi-new' as Href)}>
+              <Ionicons name="trophy" size={18} color={Palette.evergreen} />
+              <ThemedText type="smallBold" themeColor="brand">
+                Créer un tournoi
+              </ThemedText>
+            </Pressable>
+          </View>
+
+          <View style={styles.joinRow}>
+            <TextInput
+              style={styles.codeInput}
+              placeholder="Rejoindre avec un code"
+              placeholderTextColor={Palette.grey}
+              autoCapitalize="characters"
+              value={code}
+              onChangeText={setCode}
+            />
+            <Pressable
+              style={[styles.joinBtn, (joining || !code.trim()) && { opacity: 0.5 }]}
+              disabled={joining || !code.trim()}
+              onPress={joinByCode}>
+              <ThemedText type="smallBold" themeColor="onBrand">
+                Rejoindre
+              </ThemedText>
+            </Pressable>
+          </View>
 
           {tournaments.length > 0 ? (
             <>
@@ -183,12 +221,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
     alignSelf: 'flex-start',
-    marginTop: Spacing.three,
     backgroundColor: Palette.lime,
     borderRadius: Radius.pill,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
+  tournRow: { marginTop: Spacing.three },
+  joinRow: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.two },
+  codeInput: {
+    flex: 1,
+    height: 46,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    paddingHorizontal: Spacing.three,
+    color: Palette.onyx,
+    fontFamily: 'OpenSauceOne-SemiBold',
+    fontSize: 14,
+    letterSpacing: 1,
+  },
+  joinBtn: { backgroundColor: Palette.evergreen, borderRadius: Radius.sm, paddingHorizontal: Spacing.four, alignItems: 'center', justifyContent: 'center' },
   search: {
     height: 52,
     marginTop: Spacing.three,
