@@ -65,6 +65,7 @@ export default function OnboardingScreen() {
   const [ffttResults, setFfttResults] = useState<FfttPlayer[]>([]);
   const [ffttSearching, setFfttSearching] = useState(false);
   const [ffttDone, setFfttDone] = useState(false);
+  const [ffttError, setFfttError] = useState(false);
   const [fftt, setFftt] = useState<FfttPlayer | null>(null);
   const searchFired = useRef(false);
 
@@ -75,13 +76,20 @@ export default function OnboardingScreen() {
     if (nom.length < 2) return;
     searchFired.current = true;
     setFfttSearching(true);
+    setFfttError(false);
     searchFftt({ nom, prenom })
       .then((res) => setFfttResults(res.slice(0, 6)))
-      .catch(() => setFfttResults([]))
+      .catch(() => setFfttError(true)) // service FFTT indispo (session expirée…) ≠ « pas trouvé »
       .finally(() => {
         setFfttSearching(false);
         setFfttDone(true);
       });
+  }
+
+  function retryFfttSearch() {
+    searchFired.current = false;
+    setFfttDone(false);
+    runFfttSearch();
   }
 
   function toggleInterest(label: string) {
@@ -114,8 +122,9 @@ export default function OnboardingScreen() {
       case STEP.PHOTO:
         return setStep(STEP.PASSWORD);
       case STEP.PASSWORD:
-        // Saute l'étape FFTT si la recherche est finie sans résultat.
-        return setStep(ffttDone && ffttResults.length === 0 ? STEP.DONE : STEP.FFTT);
+        // Saute l'étape FFTT seulement si la recherche a abouti SANS résultat
+        // (sur erreur/service indispo, on montre l'étape pour pouvoir réessayer).
+        return setStep(ffttDone && !ffttError && ffttResults.length === 0 ? STEP.DONE : STEP.FFTT);
       case STEP.FFTT:
         return setStep(STEP.DONE);
       default:
@@ -328,6 +337,17 @@ export default function OnboardingScreen() {
                   <ActivityIndicator color={Palette.evergreen} />
                   <ThemedText type="default" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>On cherche ton classement FFTT…</ThemedText>
                 </View>
+              ) : ffttError ? (
+                <View style={styles.center}>
+                  <ThemedText type="title" style={{ textAlign: 'center' }}>FFTT indisponible</ThemedText>
+                  <ThemedText type="default" themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.two }}>
+                    Le service FFTT est momentanément indisponible. Réessaie, ou continue et lie ta licence plus tard dans les réglages.
+                  </ThemedText>
+                  <Pressable onPress={retryFfttSearch} style={styles.retryBtn}>
+                    <Ionicons name="refresh" size={18} color={Palette.evergreen} />
+                    <ThemedText type="smallBold" themeColor="brand">Réessayer</ThemedText>
+                  </Pressable>
+                </View>
               ) : (
                 <>
                   <ThemedText type="title">C&apos;est toi ? 🏓</ThemedText>
@@ -413,6 +433,17 @@ const styles = StyleSheet.create({
   },
   readonly: { justifyContent: 'center', backgroundColor: Palette.whitePP },
   linkBtn: { alignItems: 'center', paddingVertical: Spacing.three, marginTop: Spacing.one },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.four,
+    paddingHorizontal: Spacing.four,
+    height: 48,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Palette.evergreen,
+  },
   photoWrap: { alignSelf: 'center', width: 128, height: 128, marginTop: Spacing.five },
   photo: {
     width: 128,

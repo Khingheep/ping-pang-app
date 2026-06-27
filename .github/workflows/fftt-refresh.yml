@@ -10,7 +10,7 @@ name: Refresh FFTT session
 
 on:
   schedule:
-    - cron: '0 */2 * * *' # toutes les 2 heures (UTC)
+    - cron: '*/30 * * * *' # toutes les 30 min (la session FFTT/PHP expire vite ; GitHub peut retarder)
   workflow_dispatch: {} # bouton « Run workflow » pour un refresh manuel
 
 # Évite deux refresh simultanés.
