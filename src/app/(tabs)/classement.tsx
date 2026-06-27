@@ -1,142 +1,420 @@
-import { router, useFocusEffect } from 'expo-router';
+/**
+ * Onglet ELO-RANKING — hub compétition à 3 sous-vues :
+ *   • Classement : carte « Mon classement » (ELO + delta 7 jours) + leaderboard Monde/France/Paris/Amis.
+ *   • Défis      : défis en cours (statuts) + défis passés (V/D).
+ *   • Événements : rejoindre un tournoi par code, créer un tournoi, mes tournois.
+ *
+ * Re-skin du Figma « ELO-RANKING » dans notre thème clair vert/blanc.
+ */
+
+import { Ionicons } from '@expo/vector-icons';
+import { type Href, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { fetchLeaderboard, type LeaderboardEntry } from '@/lib/players/profile';
+import { fetchRecentMatches, last7Delta, type MatchView } from '@/lib/matches/history';
+import { fetchLeaderboard, fetchMyProfile, type LeaderboardEntry, type PlayerProfile } from '@/lib/players/profile';
+import {
+  fetchIncomingChallenges,
+  fetchOutgoingChallenges,
+  FORMAT_INFO,
+  respondChallenge,
+  type Challenge,
+  type ChallengeFormat,
+} from '@/lib/social/challenges';
 import { fetchFriendIds } from '@/lib/social/friends';
+import { fetchMyTournaments, joinTournamentByCode, type Tournament } from '@/lib/tournaments/tournaments';
 
-const FILTERS = ['Tous', 'France', 'Paris', 'Amis'];
-const PODIUM = [
-  { idx: 1, bg: Palette.blue, h: 150 },
-  { idx: 0, bg: Palette.lime, h: 180 },
-  { idx: 2, bg: Palette.purple, h: 140 },
-];
+const SUBTABS = ['Classement', 'Défis', 'Événements'] as const;
+const FILTERS = ['Monde', 'France', 'Paris', 'Amis'] as const;
+
+const STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  sent: { label: 'En attente', color: Palette.blue },
+  accepted: { label: 'Rentrer les scores', color: Palette.lime },
+  declined: { label: 'Refusé', color: Palette.red },
+  played: { label: 'Joué', color: Palette.border },
+};
+
+function fmtTitle(f: string | null): string {
+  return FORMAT_INFO[(f ?? 'wtt') as ChallengeFormat]?.title ?? (f ?? 'WTT').toUpperCase();
+}
 
 export default function RankingScreen() {
   const { session } = useAuth();
+  const myId = session?.user?.id;
+  const [sub, setSub] = useState(0);
+
+  const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [rows, setRows] = useState<LeaderboardEntry[]>([]);
   const [friendIds, setFriendIds] = useState<string[]>([]);
   const [filter, setFilter] = useState(0);
-  const myId = session?.user?.id;
+  const [matches, setMatches] = useState<MatchView[]>([]);
+  const [incoming, setIncoming] = useState<Challenge[]>([]);
+  const [outgoing, setOutgoing] = useState<Challenge[]>([]);
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [code, setCode] = useState('');
+  const [joining, setJoining] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      fetchLeaderboard(200).then(setRows);
-      if (myId) fetchFriendIds(myId).then(setFriendIds);
-    }, [myId]),
-  );
+  const load = useCallback(() => {
+    if (!myId) return;
+    fetchMyProfile(myId).then(setProfile);
+    fetchLeaderboard(200).then(setRows);
+    fetchFriendIds(myId).then(setFriendIds);
+    fetchRecentMatches(myId, 100).then(setMatches);
+    fetchIncomingChallenges(myId).then(setIncoming);
+    fetchOutgoingChallenges(myId).then(setOutgoing);
+    fetchMyTournaments(myId).then(setTournaments);
+  }, [myId]);
+
+  useFocusEffect(load);
+
+  const myRank = rows.findIndex((r) => r.id === myId) + 1;
+  const elo = profile?.elo ?? 0;
+  const delta7 = last7Delta(matches);
 
   const filtered = rows.filter((e) => {
     if (filter === 1) return e.country === 'France';
     if (filter === 2) return (e.city ?? '').toLowerCase().startsWith('paris');
     if (filter === 3) return e.id === myId || friendIds.includes(e.id);
-    return true; // Tous
+    return true;
   });
 
-  const top3 = filtered.slice(0, 3);
-  const rest = filtered.slice(3);
+  const passed = matches.filter((m) => m.status === 'confirmed');
+
+  async function decline(c: Challenge) {
+    await respondChallenge(c.id, 'declined').catch(() => {});
+    setIncoming((prev) => prev.filter((x) => x.id !== c.id));
+  }
+  function accept(c: Challenge) {
+    respondChallenge(c.id, 'accepted').catch(() => {});
+    setIncoming((prev) => prev.filter((x) => x.id !== c.id));
+    router.push({ pathname: '/new-match', params: { opponentId: c.from_player, opponentName: c.from?.display_name ?? 'Joueur' } });
+  }
+
+  async function join() {
+    if (!myId || !code.trim()) return;
+    try {
+      setJoining(true);
+      const id = await joinTournamentByCode(myId, code);
+      setCode('');
+      router.push({ pathname: '/tournoi', params: { id } });
+    } catch (e) {
+      Alert.alert('Code invalide', e instanceof Error ? e.message : 'Réessaie.');
+    } finally {
+      setJoining(false);
+    }
+  }
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-          <ThemedText type="title">Ranking Mondial</ThemedText>
+          <ThemedText type="title">ELO-Ranking</ThemedText>
 
-          <View style={styles.filters}>
-            {FILTERS.map((f, i) => (
-              <Pressable
-                key={f}
-                onPress={() => setFilter(i)}
-                style={[styles.pill, filter === i ? styles.pillActive : styles.pillIdle]}>
-                <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'text'}>
-                  {f}
+          {/* Carte Mon classement */}
+          <View style={styles.meCard}>
+            <View style={styles.meTop}>
+              <ThemedText type="metric" themeColor="onBrand" style={styles.meElo}>
+                {elo}
+              </ThemedText>
+              <View style={styles.meRight}>
+                <ThemedText type="smallBold" style={{ color: Palette.lime }}>
+                  Mon classement
+                </ThemedText>
+                {myRank > 0 ? (
+                  <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.85 }}>
+                    #{myRank} mondial
+                  </ThemedText>
+                ) : null}
+              </View>
+            </View>
+            <View style={styles.meDelta}>
+              <Ionicons
+                name={delta7 >= 0 ? 'caret-up' : 'caret-down'}
+                size={16}
+                color={delta7 >= 0 ? Palette.lime : Palette.red}
+              />
+              <ThemedText type="smallBold" style={{ color: delta7 >= 0 ? Palette.lime : Palette.red }}>
+                {delta7 >= 0 ? '+' : ''}
+                {delta7} · 7 derniers jours
+              </ThemedText>
+            </View>
+          </View>
+
+          {/* Sous-onglets */}
+          <View style={styles.subtabs}>
+            {SUBTABS.map((t, i) => (
+              <Pressable key={t} onPress={() => setSub(i)} style={[styles.subtab, sub === i ? styles.subOn : styles.subOff]}>
+                <ThemedText type="smallBold" themeColor={sub === i ? 'onBrand' : 'text'} numberOfLines={1}>
+                  {t}
                 </ThemedText>
               </Pressable>
             ))}
           </View>
 
-          {/* Podium */}
-          <View style={styles.podium}>
-            {PODIUM.map((p) => {
-              const e = top3[p.idx];
-              return (
-                <Pressable
-                  key={p.idx}
-                  disabled={!e}
-                  onPress={() => e && router.push({ pathname: '/player', params: { id: e.id } })}
-                  style={[styles.podiumCol, { height: p.h, backgroundColor: p.bg }]}>
-                  <ThemedText type="subtitle">#{p.idx + 1}</ThemedText>
-                  <ThemedText type="cardTitle" style={styles.podiumName}>
-                    {e?.display_name ?? '—'}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {e ? e.elo : '—'}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
+          {/* ───────── Classement ───────── */}
+          {sub === 0 ? (
+            <View style={styles.body}>
+              <View style={styles.filters}>
+                {FILTERS.map((f, i) => (
+                  <Pressable
+                    key={f}
+                    onPress={() => setFilter(i)}
+                    style={[styles.pill, filter === i ? styles.pillActive : styles.pillIdle]}>
+                    <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'text'}>
+                      {f}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
 
-          {/* Liste */}
-          <View style={styles.list}>
-            {rest.length === 0 && top3.length <= 3 ? null : null}
-            {rest.map((e, i) => {
-              const rank = i + 4;
-              const mine = e.id === myId;
-              return (
-                <Pressable
-                  key={e.id}
-                  onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}
-                  style={[styles.row, mine && styles.rowMine]}>
-                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.rank}>
-                    {rank}
-                  </ThemedText>
-                  <Avatar name={e.display_name} size={40} />
-                  <View style={styles.rowMain}>
-                    <ThemedText type="cardTitle">{e.display_name}</ThemedText>
-                    {e.city ? (
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {e.city}
+              <View style={styles.list}>
+                {filtered.map((e, i) => {
+                  const mine = e.id === myId;
+                  return (
+                    <Pressable
+                      key={e.id}
+                      onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}
+                      style={[styles.row, mine && styles.rowMine]}>
+                      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.rank}>
+                        {i + 1}
                       </ThemedText>
-                    ) : null}
-                  </View>
-                  <ThemedText type="subtitle" themeColor="brand">
-                    {e.elo}
+                      <Avatar name={e.display_name} size={36} />
+                      <View style={styles.rowMain}>
+                        <ThemedText type="cardTitle" numberOfLines={1}>
+                          {e.display_name}
+                        </ThemedText>
+                        {e.city ? (
+                          <ThemedText type="small" themeColor="textSecondary">
+                            {e.city}
+                          </ThemedText>
+                        ) : null}
+                      </View>
+                      <ThemedText type="subtitle" themeColor="brand">
+                        {e.elo}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+                {filtered.length === 0 ? (
+                  <ThemedText type="default" themeColor="textSecondary">
+                    {filter === 3 ? 'Aucun ami pour l’instant.' : 'Aucun joueur pour ce filtre.'}
                   </ThemedText>
-                </Pressable>
-              );
-            })}
-            {filtered.length === 0 ? (
-              <ThemedText type="default" themeColor="textSecondary">
-                {filter === 3
-                  ? 'Aucun ami pour l’instant. Ajoute des joueurs depuis leur profil !'
-                  : 'Aucun joueur pour ce filtre.'}
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          {/* ───────── Défis ───────── */}
+          {sub === 1 ? (
+            <View style={styles.body}>
+              <Pressable style={styles.cta} onPress={() => router.push('/jouer')}>
+                <Ionicons name="add" size={20} color={Palette.whitePP} />
+                <ThemedText type="cardTitle" themeColor="onBrand">
+                  Nouveau défi
+                </ThemedText>
+              </Pressable>
+
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Défis en cours
               </ThemedText>
-            ) : null}
-          </View>
+              {incoming.length === 0 && outgoing.filter((c) => c.status !== 'played').length === 0 ? (
+                <View style={styles.empty}>
+                  <ThemedText type="default" themeColor="textSecondary">
+                    Aucun défi en cours.
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {incoming.map((c) => (
+                    <View key={c.id} style={styles.challengeCard}>
+                      <Avatar name={c.from?.display_name ?? '?'} size={40} />
+                      <View style={styles.cardMain}>
+                        <ThemedText type="cardTitle" numberOfLines={1}>
+                          {c.from?.display_name ?? 'Joueur'}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Te défie · {fmtTitle(c.format)}
+                        </ThemedText>
+                      </View>
+                      <Pressable style={styles.declineBtn} onPress={() => decline(c)}>
+                        <Ionicons name="close" size={18} color={Palette.redInk} />
+                      </Pressable>
+                      <Pressable style={styles.acceptBtn} onPress={() => accept(c)}>
+                        <ThemedText type="smallBold" themeColor="onBrand">
+                          Accepter
+                        </ThemedText>
+                      </Pressable>
+                    </View>
+                  ))}
+                  {outgoing
+                    .filter((c) => c.status !== 'played')
+                    .map((c) => {
+                      const st = STATUS_LABEL[c.status] ?? STATUS_LABEL.sent;
+                      const canScore = c.status === 'accepted';
+                      return (
+                        <Pressable
+                          key={c.id}
+                          disabled={!canScore}
+                          onPress={() =>
+                            canScore &&
+                            router.push({ pathname: '/new-match', params: { opponentId: c.to_player, opponentName: c.to?.display_name ?? 'Joueur' } })
+                          }
+                          style={styles.row}>
+                          <Avatar name={c.to?.display_name ?? '?'} size={36} color={Palette.purple} />
+                          <View style={styles.rowMain}>
+                            <ThemedText type="cardTitle" numberOfLines={1}>
+                              {c.to?.display_name ?? 'Joueur'}
+                            </ThemedText>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              {fmtTitle(c.format)}
+                            </ThemedText>
+                          </View>
+                          <View style={[styles.statusPill, { backgroundColor: st.color }]}>
+                            <ThemedText type="smallBold" themeColor="text">
+                              {st.label}
+                            </ThemedText>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                </View>
+              )}
+
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Défis passés
+              </ThemedText>
+              {passed.length === 0 ? (
+                <View style={styles.empty}>
+                  <ThemedText type="default" themeColor="textSecondary">
+                    Aucun match joué pour l’instant.
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {passed.slice(0, 20).map((m) => (
+                    <View key={m.id} style={styles.row}>
+                      <View style={[styles.resultBar, { backgroundColor: m.won ? Palette.green : Palette.red }]} />
+                      <View style={styles.rowMain}>
+                        <ThemedText type="cardTitle" numberOfLines={1}>
+                          vs {m.opponent}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {m.format}
+                          {m.delta ? ` · ${m.delta > 0 ? '+' : ''}${m.delta} ELO` : ''}
+                        </ThemedText>
+                      </View>
+                      <ThemedText type="subtitle" themeColor={m.won ? 'brand' : 'textMuted'}>
+                        {m.score || '—'}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          {/* ───────── Événements ───────── */}
+          {sub === 2 ? (
+            <View style={styles.body}>
+              <View style={styles.joinCard}>
+                <ThemedText type="cardTitle">Rejoindre un tournoi</ThemedText>
+                <View style={styles.joinRow}>
+                  <TextInput
+                    style={styles.codeInput}
+                    placeholder="CODE TOURNOI"
+                    placeholderTextColor={Palette.grey}
+                    autoCapitalize="characters"
+                    value={code}
+                    onChangeText={setCode}
+                  />
+                  <Pressable style={[styles.joinBtn, (joining || !code.trim()) && { opacity: 0.5 }]} disabled={joining || !code.trim()} onPress={join}>
+                    <ThemedText type="smallBold" themeColor="onBrand">
+                      Rejoindre
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+
+              <Pressable style={styles.createCard} onPress={() => router.push('/tournoi-new' as Href)}>
+                <Ionicons name="trophy" size={22} color={Palette.evergreen} />
+                <ThemedText type="cardTitle" themeColor="brand">
+                  Créer un tournoi
+                </ThemedText>
+              </Pressable>
+
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Mes tournois
+              </ThemedText>
+              {tournaments.length === 0 ? (
+                <View style={styles.empty}>
+                  <ThemedText type="default" themeColor="textSecondary">
+                    Aucun tournoi. Crée-en un ou rejoins-en un avec un code !
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {tournaments.map((t) => (
+                    <Pressable key={t.id} style={styles.row} onPress={() => router.push({ pathname: '/tournoi', params: { id: t.id } })}>
+                      <View style={[styles.tIcon, { backgroundColor: t.status === 'done' ? Palette.lime : Palette.blue }]}>
+                        <Ionicons name="trophy" size={18} color={Palette.evergreen} />
+                      </View>
+                      <View style={styles.rowMain}>
+                        <ThemedText type="cardTitle" numberOfLines={1}>
+                          {t.name}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Code {t.code} · {TOURNAMENT_STATUS[t.status]}
+                        </ThemedText>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : null}
         </ScrollView>
       </SafeAreaView>
     </View>
   );
 }
 
+const TOURNAMENT_STATUS: Record<string, string> = {
+  open: 'Inscriptions ouvertes',
+  poules: 'Phase de poules',
+  bracket: 'Phase finale',
+  done: 'Terminé',
+};
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
-  filters: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.three },
+
+  meCard: { backgroundColor: Palette.evergreen, borderRadius: Radius.md, padding: Spacing.four, marginTop: Spacing.three, gap: Spacing.two },
+  meTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  meElo: { fontSize: 44, lineHeight: 48 },
+  meRight: { alignItems: 'flex-end', gap: Spacing.half },
+  meDelta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+
+  subtabs: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.four },
+  subtab: { flex: 1, paddingVertical: Spacing.two, paddingHorizontal: Spacing.one, borderRadius: Radius.xs, alignItems: 'center' },
+  subOn: { backgroundColor: Palette.evergreen },
+  subOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  body: { marginTop: Spacing.four, gap: Spacing.two },
+
+  filters: { flexDirection: 'row', gap: Spacing.two },
   pill: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
   pillActive: { backgroundColor: Palette.evergreen },
   pillIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  podium: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, marginTop: Spacing.five },
-  podiumCol: { flex: 1, borderRadius: Radius.sm, padding: Spacing.three, justifyContent: 'flex-start', gap: Spacing.one },
-  podiumName: { marginTop: 'auto' },
-  list: { marginTop: Spacing.five, gap: Spacing.two },
+
+  list: { gap: Spacing.two },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -147,8 +425,64 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     paddingVertical: Spacing.three,
     paddingHorizontal: Spacing.three,
+    overflow: 'hidden',
   },
   rowMine: { backgroundColor: Palette.lime, borderColor: Palette.lime },
-  rank: { width: 24 },
+  rank: { width: 22 },
   rowMain: { flex: 1 },
+  resultBar: { width: 5, height: 36, borderRadius: 3 },
+
+  section: { marginTop: Spacing.three, marginBottom: Spacing.one },
+  empty: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border, borderRadius: Radius.sm, padding: Spacing.four },
+
+  cta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    height: 50,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.evergreen,
+  },
+  challengeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.evergreen,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
+  cardMain: { flex: 1 },
+  declineBtn: { width: 36, height: 36, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  acceptBtn: { backgroundColor: Palette.evergreen, borderRadius: Radius.xs, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
+  statusPill: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
+
+  joinCard: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border, borderRadius: Radius.sm, padding: Spacing.three, gap: Spacing.two },
+  joinRow: { flexDirection: 'row', gap: Spacing.two },
+  codeInput: {
+    flex: 1,
+    height: 46,
+    borderRadius: Radius.xs,
+    backgroundColor: Palette.whitePP,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    paddingHorizontal: Spacing.three,
+    color: Palette.onyx,
+    fontFamily: 'OpenSauceOne-SemiBold',
+    fontSize: 15,
+    letterSpacing: 2,
+  },
+  joinBtn: { backgroundColor: Palette.evergreen, borderRadius: Radius.xs, paddingHorizontal: Spacing.four, alignItems: 'center', justifyContent: 'center' },
+  createCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    height: 56,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.lime,
+  },
+  tIcon: { width: 36, height: 36, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
 });

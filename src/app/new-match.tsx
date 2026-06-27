@@ -5,49 +5,52 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } fro
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { SetScoreEntry, type SetInput } from '@/components/set-score-entry';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { proposeMatch } from '@/lib/matches/confirm';
+import { countSets, formatSetScores, validateMatch, type SetScore } from '@/lib/matches/sets';
 
 const FEELINGS = ['💪', '🔥', '😅', '😐', '😩'];
 const BEST_OF = [3, 5, 7];
 
-function Stepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  return (
-    <View style={styles.stepper}>
-      <Pressable style={styles.stepBtn} onPress={() => onChange(Math.max(0, value - 1))}>
-        <Ionicons name="remove" size={20} color={Palette.onyx} />
-      </Pressable>
-      <ThemedText type="metric" style={styles.stepVal}>
-        {value}
-      </ThemedText>
-      <Pressable style={styles.stepBtn} onPress={() => onChange(Math.min(4, value + 1))}>
-        <Ionicons name="add" size={20} color={Palette.onyx} />
-      </Pressable>
-    </View>
-  );
+/** Lignes de manches initiales pour un format (Bo5 → 3 manches pré-affichées). */
+function initialSets(bestOf: number): SetInput[] {
+  return Array.from({ length: Math.ceil(bestOf / 2) }, () => ({ a: '', b: '' }));
+}
+
+/** Convertit la saisie (chaînes) en manches numériques complètes. */
+function numericSets(sets: SetInput[]): SetScore[] {
+  return sets
+    .map((s) => ({ a: Number.parseInt(s.a, 10), b: Number.parseInt(s.b, 10) }))
+    .filter((s) => Number.isFinite(s.a) && Number.isFinite(s.b));
 }
 
 export default function NewMatchScreen() {
   const { opponentId, opponentName } = useLocalSearchParams<{ opponentId?: string; opponentName?: string }>();
-  const [mySets, setMySets] = useState(0);
-  const [oppSets, setOppSets] = useState(0);
+  const [sets, setSets] = useState<SetInput[]>(() => initialSets(5));
   const [bestOf, setBestOf] = useState(5);
   const [feeling, setFeeling] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const counts = countSets(numericSets(sets));
+  const mySets = counts.a;
+  const oppSets = counts.b;
 
   async function submit() {
     if (!opponentId) {
       Alert.alert('Adversaire manquant', 'Reviens en arrière et choisis un joueur à défier.');
       return;
     }
-    if (mySets === oppSets) {
-      Alert.alert('Score incomplet', 'Il faut un vainqueur (pas d’égalité de sets).');
+    const valid = validateMatch(numericSets(sets), bestOf);
+    if (!valid.ok) {
+      Alert.alert('Score invalide', valid.error ?? 'Vérifie les manches.');
       return;
     }
     try {
       setBusy(true);
-      const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling });
+      const setScores = formatSetScores(numericSets(sets));
+      const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling, setScores: setScores || null });
       const sign = r.preview_delta > 0 ? '+' : '';
       Alert.alert(
         'Match envoyé 📨',
@@ -86,21 +89,26 @@ export default function NewMatchScreen() {
             </View>
           ) : null}
 
+          {/* Récap manches gagnées */}
           <View style={styles.scoreRow}>
             <View style={styles.scoreCol}>
-              <ThemedText type="smallBold" themeColor="textSecondary">
+              <ThemedText type="smallBold" themeColor="textSecondary" numberOfLines={1}>
                 MOI
               </ThemedText>
-              <Stepper value={mySets} onChange={setMySets} />
+              <ThemedText type="metric" themeColor={mySets > oppSets ? 'brand' : 'textMuted'} style={styles.stepVal}>
+                {mySets}
+              </ThemedText>
             </View>
             <ThemedText type="subtitle" themeColor="textMuted">
               —
             </ThemedText>
             <View style={styles.scoreCol}>
-              <ThemedText type="smallBold" themeColor="textSecondary">
-                {opponentName ?? 'ADVERSAIRE'}
+              <ThemedText type="smallBold" themeColor="textSecondary" numberOfLines={1}>
+                {(opponentName ?? 'ADVERSAIRE').toUpperCase()}
               </ThemedText>
-              <Stepper value={oppSets} onChange={setOppSets} />
+              <ThemedText type="metric" themeColor={oppSets > mySets ? 'brand' : 'textMuted'} style={styles.stepVal}>
+                {oppSets}
+              </ThemedText>
             </View>
           </View>
 
@@ -111,7 +119,10 @@ export default function NewMatchScreen() {
             {BEST_OF.map((b) => (
               <Pressable
                 key={b}
-                onPress={() => setBestOf(b)}
+                onPress={() => {
+                  setBestOf(b);
+                  setSets(initialSets(b));
+                }}
                 style={[styles.pill, bestOf === b ? styles.pillActive : styles.pillIdle]}>
                 <ThemedText type="smallBold" themeColor={bestOf === b ? 'onBrand' : 'text'}>
                   Bo{b}
@@ -119,6 +130,17 @@ export default function NewMatchScreen() {
               </Pressable>
             ))}
           </View>
+
+          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+            Détail des manches
+          </ThemedText>
+          <SetScoreEntry
+            value={sets}
+            onChange={setSets}
+            bestOf={bestOf}
+            meLabel="Moi"
+            oppLabel={opponentName ?? 'Adv.'}
+          />
 
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Feeling
@@ -163,17 +185,6 @@ const styles = StyleSheet.create({
   opp: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, marginBottom: Spacing.four },
   scoreRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.two },
   scoreCol: { alignItems: 'center', gap: Spacing.two, flex: 1 },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  stepBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   stepVal: { fontSize: 44, lineHeight: 48, minWidth: 48, textAlign: 'center' },
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   pillRow: { flexDirection: 'row', gap: Spacing.two },

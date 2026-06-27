@@ -21,6 +21,10 @@ type AuthContextValue = {
   signInWithEmail: (email: string, password: string) => Promise<void>;
   /** Crée le compte et retourne l'id du user si une session est ouverte (confirmation email off), sinon null. */
   signUpWithEmail: (email: string, password: string) => Promise<string | null>;
+  /** Passwordless : envoie un code à 6 chiffres par email (crée le compte si besoin). */
+  sendEmailOtp: (email: string) => Promise<void>;
+  /** Vérifie le code OTP → ouvre la session. Retourne l'id du user. */
+  verifyEmailOtp: (email: string, token: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   needsOnboarding: boolean;
   markOnboarded: () => void;
@@ -116,8 +120,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       async signUpWithEmail(email, password) {
         const { data, error } = await supabase.auth.signUp({ email, password });
+        if (!error) return data.session ? (data.user?.id ?? null) : null; // session immédiate si confirmation off
+        // Email déjà inscrit (422) → on tente de se connecter avec les mêmes identifiants.
+        if (error.status === 422 || /already (registered|exists)|user already/i.test(error.message)) {
+          const { data: si, error: siErr } = await supabase.auth.signInWithPassword({ email, password });
+          if (siErr) throw new Error('Cet email a déjà un compte. Vérifie ton mot de passe, ou connecte-toi.');
+          return si.user?.id ?? null;
+        }
+        throw error;
+      },
+      async sendEmailOtp(email) {
+        const { error } = await supabase.auth.signInWithOtp({
+          email: email.trim(),
+          options: { shouldCreateUser: true },
+        });
         if (error) throw error;
-        return data.session ? (data.user?.id ?? null) : null; // session immédiate si confirmation off
+      },
+      async verifyEmailOtp(email, token) {
+        const { data, error } = await supabase.auth.verifyOtp({
+          email: email.trim(),
+          token: token.trim(),
+          type: 'email',
+        });
+        if (error) throw error;
+        return data.user?.id ?? null;
       },
       async signOut() {
         onboardedRef.current = false;

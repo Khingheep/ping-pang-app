@@ -32,6 +32,8 @@ export async function addTrainingSession(p: {
   venueId?: string | null;
   feeling?: string | null;
   note?: string | null;
+  photoUrl?: string | null;
+  isSolo?: boolean;
 }): Promise<void> {
   const { error } = await supabase.from('training_sessions').insert({
     player_id: p.playerId,
@@ -41,8 +43,101 @@ export async function addTrainingSession(p: {
     venue_id: p.venueId ?? null,
     feeling: p.feeling ?? null,
     note: p.note ?? null,
+    photo_url: p.photoUrl ?? null,
+    is_solo: p.isSolo ?? false,
   });
   if (error) throw error;
+}
+
+/** Upload une photo de séance (chemin <userId>/<id>.jpg) et renvoie l'URL publique. */
+export async function uploadSessionPhoto(userId: string, uri: string, key: string): Promise<string> {
+  const res = await fetch(uri);
+  const buf = await res.arrayBuffer();
+  const path = `${userId}/${key}.jpg`;
+  const { error } = await supabase.storage
+    .from('session-photos')
+    .upload(path, buf, { contentType: 'image/jpeg', upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from('session-photos').getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// ───────────────────────── Feed social (séances de tout le monde) ─────────────────────────
+
+export type SessionFeedItem = {
+  id: string;
+  author: { id: string; name: string; avatarUrl: string | null };
+  durationMin: number;
+  feeling: string | null;
+  note: string | null;
+  strokes: string[];
+  photoUrl: string | null;
+  isSolo: boolean;
+  venueName: string | null;
+  createdAt: string;
+  likeCount: number;
+  liked: boolean;
+};
+
+type FeedRow = {
+  id: string;
+  player_id: string;
+  duration_min: number;
+  feeling: string | null;
+  note: string | null;
+  strokes: string[] | null;
+  photo_url: string | null;
+  is_solo: boolean | null;
+  created_at: string;
+  players: { display_name: string; avatar_url: string | null } | null;
+  venues: { name: string } | null;
+};
+
+/** Feed global des séances (tous les joueurs), avec compteur de likes et mon état de like. */
+export async function fetchSessionsFeed(myId: string | undefined, limit = 40): Promise<SessionFeedItem[]> {
+  const { data } = await supabase
+    .from('training_sessions')
+    .select(
+      // `players!...fkey` désambiguïse : depuis session_likes, players a 2 relations possibles.
+      'id, player_id, duration_min, feeling, note, strokes, photo_url, is_solo, created_at, players!training_sessions_player_id_fkey(display_name, avatar_url), venues(name)',
+    )
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  const rows = (data as unknown as FeedRow[] | null) ?? [];
+  if (!rows.length) return [];
+
+  const ids = rows.map((r) => r.id);
+  const { data: likeData } = await supabase.from('session_likes').select('session_id, player_id').in('session_id', ids);
+  const likes = (likeData as { session_id: string; player_id: string }[] | null) ?? [];
+  const counts = new Map<string, number>();
+  const mine = new Set<string>();
+  for (const l of likes) {
+    counts.set(l.session_id, (counts.get(l.session_id) ?? 0) + 1);
+    if (l.player_id === myId) mine.add(l.session_id);
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    author: { id: r.player_id, name: r.players?.display_name ?? 'Joueur', avatarUrl: r.players?.avatar_url ?? null },
+    durationMin: r.duration_min,
+    feeling: r.feeling,
+    note: r.note,
+    strokes: r.strokes ?? [],
+    photoUrl: r.photo_url,
+    isSolo: r.is_solo ?? false,
+    venueName: r.venues?.name ?? null,
+    createdAt: r.created_at,
+    likeCount: counts.get(r.id) ?? 0,
+    liked: mine.has(r.id),
+  }));
+}
+
+export async function likeSession(sessionId: string, playerId: string): Promise<void> {
+  await supabase.from('session_likes').insert({ session_id: sessionId, player_id: playerId });
+}
+
+export async function unlikeSession(sessionId: string, playerId: string): Promise<void> {
+  await supabase.from('session_likes').delete().eq('session_id', sessionId).eq('player_id', playerId);
 }
 
 type Row = {

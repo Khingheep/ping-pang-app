@@ -43,12 +43,12 @@ async function invokeFftt(body: Record<string, unknown>): Promise<FfttResponse> 
   return d;
 }
 
-/** Recherche FFTT par nom / prénom / licence (le sexe est requis par la FFTT). */
+/** Recherche FFTT par nom / prénom / licence. Sexe omis → l'edge cherche Hommes + Femmes. */
 export async function searchFftt(params: {
   nom?: string;
   prenom?: string;
   licence?: string;
-  sexe: 'Hommes' | 'Femmes';
+  sexe?: 'Hommes' | 'Femmes';
 }): Promise<FfttPlayer[]> {
   const d = await invokeFftt({ action: 'search', ...params });
   return d.players ?? [];

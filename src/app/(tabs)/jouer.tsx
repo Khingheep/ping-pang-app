@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { type Href, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -72,7 +72,7 @@ export default function DefisScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Défis</ThemedText>
 
-          <Pressable style={styles.tournoiBtn} onPress={() => router.push('/tournoi')}>
+          <Pressable style={styles.tournoiBtn} onPress={() => router.push('/tournoi-new' as Href)}>
             <Ionicons name="trophy" size={18} color={Palette.evergreen} />
             <ThemedText type="smallBold" themeColor="brand">
               Créer un tournoi

@@ -1,4 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -12,8 +14,14 @@ import {
   FEELINGS,
   PARTNER_LEVELS,
   STROKES,
+  uploadSessionPhoto,
 } from '@/lib/training/sessions';
 import { fetchVenues, type Venue } from '@/lib/venues/venues';
+
+/** Identifiant de fichier photo (Date.now()+random ok côté app). */
+function photoKey(): string {
+  return `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
 
 const DURATIONS = [
   { min: 30, label: '30 min' },
@@ -31,11 +39,30 @@ export default function NewTrainingScreen() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [venue, setVenue] = useState<Venue | null>(null);
   const [query, setQuery] = useState('');
+  const [note, setNote] = useState('');
+  const [isSolo, setIsSolo] = useState(false);
+  const [photo, setPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     fetchVenues().then(setVenues);
   }, []);
+
+  async function pickPhoto() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Photo', 'Autorise l’accès aux photos pour illustrer ta séance.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.6,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    setPhoto(res.assets[0].uri);
+  }
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -52,13 +79,24 @@ export default function NewTrainingScreen() {
     if (!id) return;
     try {
       setBusy(true);
+      let photoUrl: string | null = null;
+      if (photo) {
+        try {
+          photoUrl = await uploadSessionPhoto(id, photo, photoKey());
+        } catch {
+          /* photo optionnelle : on enregistre la séance même si l'upload échoue */
+        }
+      }
       await addTrainingSession({
         playerId: id,
         durationMin: duration,
         strokes,
-        partnerLevel: partner,
+        partnerLevel: isSolo ? null : partner,
         venueId: venue?.id ?? null,
         feeling,
+        note: note.trim() || null,
+        photoUrl,
+        isSolo,
       });
       Alert.alert('Séance enregistrée 🏓', `${duration >= 60 ? `${Math.floor(duration / 60)}h${duration % 60 ? duration % 60 : ''}` : `${duration} min`} de jeu, bien joué !`, [
         { text: 'OK', onPress: () => router.back() },
@@ -100,20 +138,31 @@ export default function NewTrainingScreen() {
             ))}
           </View>
 
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            NIVEAU DU PARTENAIRE
-          </ThemedText>
-          <View style={styles.wrap}>
-            {PARTNER_LEVELS.map((p) => (
-              <Chip
-                key={p}
-                label={p}
-                active={partner === p}
-                onPress={() => setPartner(partner === p ? null : p)}
-                color={Palette.lime}
-              />
-            ))}
-          </View>
+          <Pressable style={styles.soloRow} onPress={() => setIsSolo((v) => !v)}>
+            <ThemedText type="cardTitle">Session seul</ThemedText>
+            <View style={[styles.checkbox, isSolo && styles.checkboxOn]}>
+              {isSolo ? <Ionicons name="checkmark" size={16} color={Palette.whitePP} /> : null}
+            </View>
+          </Pressable>
+
+          {!isSolo ? (
+            <>
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                NIVEAU DU PARTENAIRE
+              </ThemedText>
+              <View style={styles.wrap}>
+                {PARTNER_LEVELS.map((p) => (
+                  <Chip
+                    key={p}
+                    label={p}
+                    active={partner === p}
+                    onPress={() => setPartner(partner === p ? null : p)}
+                    color={Palette.lime}
+                  />
+                ))}
+              </View>
+            </>
+          ) : null}
 
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
             LIEU
@@ -162,6 +211,37 @@ export default function NewTrainingScreen() {
               <Chip key={f} label={f} active={feeling === f} onPress={() => setFeeling(feeling === f ? null : f)} grow />
             ))}
           </View>
+
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+            TES SENSATIONS
+          </ThemedText>
+          <TextInput
+            style={styles.note}
+            placeholder="Ex : bon contrôle, le revers progresse..."
+            placeholderTextColor={Palette.grey}
+            value={note}
+            onChangeText={setNote}
+            multiline
+          />
+
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+            PHOTO (OPTIONNEL)
+          </ThemedText>
+          {photo ? (
+            <View style={styles.photoWrap}>
+              <Image source={{ uri: photo }} style={styles.photo} contentFit="cover" />
+              <Pressable style={styles.photoRemove} onPress={() => setPhoto(null)} hitSlop={8}>
+                <Ionicons name="close-circle" size={26} color={Palette.whitePP} />
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable style={styles.photoAdd} onPress={pickPhoto}>
+              <Ionicons name="camera-outline" size={22} color={Palette.evergreen} />
+              <ThemedText type="smallBold" themeColor="brand">
+                Ajouter une photo
+              </ThemedText>
+            </Pressable>
+          )}
         </ScrollView>
 
         <Pressable style={[styles.submit, busy && { opacity: 0.6 }]} disabled={busy} onPress={save}>
@@ -259,6 +339,54 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
   },
+  soloRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.four,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
+  checkbox: {
+    width: 26,
+    height: 26,
+    borderRadius: Radius.xs,
+    borderWidth: 1.5,
+    borderColor: Palette.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
+  note: {
+    minHeight: 88,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    padding: Spacing.three,
+    color: Palette.onyx,
+    fontFamily: 'OpenSauceOne-Regular',
+    fontSize: 15,
+    textAlignVertical: 'top',
+  },
+  photoAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    height: 88,
+    borderRadius: Radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.evergreen,
+    borderStyle: 'dashed',
+  },
+  photoWrap: { position: 'relative' },
+  photo: { width: '100%', height: 180, borderRadius: Radius.sm, backgroundColor: Palette.white },
+  photoRemove: { position: 'absolute', top: Spacing.two, right: Spacing.two },
   submit: {
     margin: Spacing.four,
     height: 56,

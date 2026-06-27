@@ -52,3 +52,6 @@ design/figma/*.json
 
 design/figma/
 dist-web/
+
+# Supabase CLI local state
+supabase/.temp/

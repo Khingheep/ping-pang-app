@@ -9,12 +9,15 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import {
   challengePreview,
+  DISCIPLINE_INFO,
   FORMAT_INFO,
   sendChallenge,
   type ChallengeFormat,
+  type Discipline,
 } from '@/lib/social/challenges';
 
-const FORMATS: ChallengeFormat[] = ['wtt', 'bo5', 'bo3'];
+const FORMATS: ChallengeFormat[] = ['bo3', 'bo5', 'bo7', 'wtt', 'champions'];
+const DISCIPLINES: Discipline[] = ['ping-pong', 'hardbat'];
 
 export default function ChallengeScreen() {
   const { opponentId, opponentName, opponentElo, opponentCity } = useLocalSearchParams<{
@@ -25,6 +28,7 @@ export default function ChallengeScreen() {
   }>();
   const { session } = useAuth();
   const [format, setFormat] = useState<ChallengeFormat>('wtt');
+  const [discipline, setDiscipline] = useState<Discipline>('ping-pong');
   const [preview, setPreview] = useState<{ winDelta: number; lossDelta: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -43,7 +47,7 @@ export default function ChallengeScreen() {
     if (!me || !opponentId) return;
     try {
       setBusy(true);
-      await sendChallenge(me, opponentId, format);
+      await sendChallenge(me, opponentId, format, discipline);
       setSent(true);
     } catch (e) {
       Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
@@ -156,6 +160,23 @@ export default function ChallengeScreen() {
             ))}
           </View>
 
+          {/* Discipline */}
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+            DISCIPLINE
+          </ThemedText>
+          <View style={styles.formatRow}>
+            {DISCIPLINES.map((d) => (
+              <Pressable
+                key={d}
+                onPress={() => setDiscipline(d)}
+                style={[styles.dPill, discipline === d ? styles.fActive : styles.fIdle]}>
+                <ThemedText type="smallBold" themeColor={discipline === d ? 'onBrand' : 'text'}>
+                  {DISCIPLINE_INFO[d]}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+
           <View style={styles.stakeInline}>
             <ThemedText type="small" themeColor="textSecondary">
               ELO en jeu : <ThemedText type="smallBold" themeColor="brand">± {stake} points</ThemedText> ({loss} si défaite)
@@ -194,8 +215,9 @@ const styles = StyleSheet.create({
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   reco: { backgroundColor: Palette.lime, borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
   heroDelta: { color: Palette.lime, fontSize: 56, lineHeight: 60, marginTop: Spacing.two },
-  formatRow: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.three },
-  fPill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.xs, alignItems: 'center' },
+  formatRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
+  fPill: { paddingVertical: Spacing.three, paddingHorizontal: Spacing.four, borderRadius: Radius.xs, alignItems: 'center' },
+  dPill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.xs, alignItems: 'center' },
   fActive: { backgroundColor: Palette.evergreen },
   fIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   stakeInline: { marginTop: Spacing.three },

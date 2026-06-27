@@ -1,0 +1,216 @@
+/**
+ * Edge Function `fftt` — lookup joueurs FFTT pour l'app Ping Pang Paris.
+ *
+ * Endpoints (GET query ou POST JSON — compatible supabase.functions.invoke) :
+ *   action=search  &nom=&prenom=&licence=&club=&nclub=&sexe=Hommes|Femmes
+ *                  &type=cl|off &limit=  → { players: FfttPlayer[] }
+ *   action=player  &numberId=            → { player: FfttPlayerDetail }
+ *
+ * La session FFTT (PHPSESSID validé par CAPTCHA) est lue dans la table
+ * `fftt_session`, alimentée par le script Node `refresh-session`. Si elle est
+ * morte (CAPTCHA réapparu), on renvoie 503 `session_expired`.
+ *
+ * Les réponses sont mises en cache dans `fftt_cache` (TTL ci-dessous) pour ne
+ * pas marteler FFTT.
+ */
+
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  searchFftt,
+  getDetailFftt,
+  SessionExpiredError,
+  type FfttMatch,
+  type SearchParams,
+  type Sexe,
+} from './fftt.ts';
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
+
+/** TTL du cache par type de requête (secondes). */
+const TTL = { search: 3600, player: 21600 } as const;
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS, 'content-type': 'application/json; charset=utf-8' },
+  });
+}
+
+/** Fusionne les paramètres venant de la query string et d'un corps JSON. */
+async function readParams(req: Request, url: URL): Promise<Record<string, string>> {
+  const params: Record<string, string> = {};
+  for (const [k, v] of url.searchParams) params[k] = v;
+  if (req.method === 'POST') {
+    try {
+      const body = await req.json();
+      if (body && typeof body === 'object') {
+        for (const [k, v] of Object.entries(body)) {
+          if (v != null) params[k] = String(v);
+        }
+      }
+    } catch {
+      // pas de corps JSON → on garde la query
+    }
+  }
+  return params;
+}
+
+async function getPhpsessid(supabase: SupabaseClient): Promise<string | null> {
+  const { data } = await supabase
+    .from('fftt_session')
+    .select('phpsessid')
+    .eq('id', 1)
+    .maybeSingle();
+  return data?.phpsessid ?? null;
+}
+
+async function readCache(supabase: SupabaseClient, key: string, ttl: number): Promise<unknown | null> {
+  const { data } = await supabase
+    .from('fftt_cache')
+    .select('payload, fetched_at')
+    .eq('cache_key', key)
+    .maybeSingle();
+  if (!data) return null;
+  const ageMs = Date.now() - new Date(data.fetched_at as string).getTime();
+  if (ageMs > ttl * 1000) return null;
+  return data.payload;
+}
+
+async function writeCache(supabase: SupabaseClient, key: string, payload: unknown): Promise<void> {
+  await supabase
+    .from('fftt_cache')
+    .upsert({ cache_key: key, payload, fetched_at: new Date().toISOString() });
+}
+
+/** "JJ/MM/AA" → "20AA-MM-JJ" (ISO), ou null si le format ne colle pas. */
+function isoFromFfttDate(raw: string): string | null {
+  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+  if (!m) return null;
+  const [, dd, mm, yy] = m;
+  return `20${yy}-${mm}-${dd}`;
+}
+
+/** Clé naturelle idempotente d'un match (cf. commentaire migration 0020). */
+function matchUid(playerId: string, m: FfttMatch): string {
+  const iso = isoFromFfttDate(m.date) ?? m.date;
+  const adv = m.adversaire.numberId ?? m.adversaire.nom.replace(/\s+/g, '_');
+  return `${playerId}:${iso}:${adv}:${m.journee ?? 'x'}`;
+}
+
+/** Persiste l'historique des matchs d'un joueur — best-effort, upsert idempotent. */
+async function upsertMatches(
+  supabase: SupabaseClient,
+  playerId: string,
+  matchs: FfttMatch[],
+): Promise<void> {
+  if (!matchs.length) return;
+  const now = new Date().toISOString();
+  await supabase.from('fftt_matches').upsert(
+    matchs.map((m) => ({
+      match_uid: matchUid(playerId, m),
+      player_number_id: playerId,
+      match_date: isoFromFfttDate(m.date),
+      match_date_raw: m.date,
+      victoire: m.victoire,
+      adversaire_number_id: m.adversaire.numberId,
+      adversaire_nom: m.adversaire.nom,
+      adversaire_classement: m.adversaire.classement,
+      journee: m.journee,
+      coefficient: m.coefficient,
+      gain_perte: m.gainPerte,
+      synced_at: now,
+    })),
+    { onConflict: 'match_uid' },
+  );
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+
+  const url = new URL(req.url);
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  );
+
+  try {
+    const p = await readParams(req, url);
+    const action = p.action ?? 'search';
+
+    const phpsessid = await getPhpsessid(supabase);
+    if (!phpsessid) {
+      return json({ error: 'session_expired', hint: 'lancer `npm run fftt -- refresh-session`' }, 503);
+    }
+
+    if (action === 'search') {
+      const params: SearchParams = {
+        nom: p.nom,
+        prenom: p.prenom,
+        licence: p.licence,
+        club: p.club,
+        nclub: p.nclub,
+        sexe: p.sexe as Sexe | undefined,
+        classementType: p.type as 'cl' | 'off' | undefined,
+        categorie: p.categorie,
+        limit: p.limit ? Number(p.limit) : undefined,
+      };
+      const key = `search:${new URLSearchParams(
+        Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]),
+      ).toString()}`;
+
+      const cached = await readCache(supabase, key, TTL.search);
+      if (cached) return json({ players: cached, cached: true });
+
+      const players = await searchFftt(phpsessid, params);
+      await writeCache(supabase, key, players);
+
+      // Alimente le miroir local `fftt_players` (typeahead) — best-effort.
+      if (players.length) {
+        await supabase.from('fftt_players').upsert(
+          players.map((pl) => ({
+            number_id: pl.numberId,
+            nom: pl.nom,
+            prenom: pl.prenom,
+            club_nom: pl.club?.nom ?? null,
+            sexe: pl.sexe,
+            classement: pl.classementOfficiel,
+            points_off: pl.pointsOfficiels,
+            points_men: pl.pointsMensuels,
+            rang_national: pl.rangNational,
+            categorie: pl.categorie,
+            synced_at: new Date().toISOString(),
+          })),
+          { onConflict: 'number_id' },
+        );
+      }
+
+      return json({ players });
+    }
+
+    if (action === 'player') {
+      const numberId = p.numberId ?? p.licence;
+      if (!numberId) return json({ error: 'numberId requis' }, 400);
+
+      const key = `player:${numberId}`;
+      const cached = await readCache(supabase, key, TTL.player);
+      if (cached) return json({ player: cached, cached: true });
+
+      const player = await getDetailFftt(phpsessid, numberId);
+      await writeCache(supabase, key, player);
+      // Persiste l'historique des matchs dans la table dédiée — best-effort.
+      await upsertMatches(supabase, numberId, player.matchs);
+      return json({ player });
+    }
+
+    return json({ error: `action inconnue: ${action}` }, 400);
+  } catch (err) {
+    if (err instanceof SessionExpiredError) {
+      return json({ error: 'session_expired', hint: 'lancer `npm run fftt -- refresh-session`' }, 503);
+    }
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});

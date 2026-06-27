@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase/client';
 
-export type ChallengeFormat = 'wtt' | 'bo5' | 'bo3';
+export type ChallengeFormat = 'wtt' | 'bo7' | 'bo5' | 'bo3' | 'champions';
+export type Discipline = 'ping-pong' | 'hardbat';
 
 export type Challenge = {
   id: string;
@@ -9,19 +10,42 @@ export type Challenge = {
   message: string | null;
   status: string;
   format: string | null;
+  discipline: string | null;
   created_at: string;
   from: { display_name: string } | null;
+  to: { display_name: string } | null;
 };
 
+/** Nombre de sets (best_of) associé à un format de défi. */
+export function bestOfForFormat(format: ChallengeFormat): number {
+  if (format === 'bo3') return 3;
+  if (format === 'bo5') return 5;
+  return 7; // bo7 | wtt | champions
+}
+
 export type RecentOpponent = { id: string; name: string; elo: number; city: string | null; lastPlayed: string };
+
+const CHALLENGE_COLS =
+  'id, from_player, to_player, message, status, format, discipline, created_at, from:from_player(display_name), to:to_player(display_name)';
 
 export async function fetchIncomingChallenges(myId: string): Promise<Challenge[]> {
   const { data } = await supabase
     .from('challenges')
-    .select('id, from_player, to_player, message, status, format, created_at, from:from_player(display_name)')
+    .select(CHALLENGE_COLS)
     .eq('to_player', myId)
     .eq('status', 'sent')
     .order('created_at', { ascending: false });
+  return (data as unknown as Challenge[] | null) ?? [];
+}
+
+/** Défis que J'AI envoyés (tous statuts), pour la section « Défis en cours ». */
+export async function fetchOutgoingChallenges(myId: string): Promise<Challenge[]> {
+  const { data } = await supabase
+    .from('challenges')
+    .select(CHALLENGE_COLS)
+    .eq('from_player', myId)
+    .order('created_at', { ascending: false })
+    .limit(30);
   return (data as unknown as Challenge[] | null) ?? [];
 }
 
@@ -29,11 +53,12 @@ export async function sendChallenge(
   fromId: string,
   toId: string,
   format: ChallengeFormat = 'wtt',
+  discipline: Discipline = 'ping-pong',
   message?: string,
 ): Promise<void> {
   const { error } = await supabase
     .from('challenges')
-    .insert({ from_player: fromId, to_player: toId, format, message: message ?? null, status: 'sent' });
+    .insert({ from_player: fromId, to_player: toId, format, discipline, message: message ?? null, status: 'sent' });
   if (error) throw error;
 }
 
@@ -82,6 +107,13 @@ export async function challengePreview(opponentId: string): Promise<{ winDelta: 
 
 export const FORMAT_INFO: Record<ChallengeFormat, { title: string; tag: string; detail: string }> = {
   wtt: { title: 'WTT', tag: 'Format officiel', detail: 'Meilleur des 7 sets' },
-  bo5: { title: 'Bo5', tag: 'Classique', detail: 'Meilleur des 5 sets' },
-  bo3: { title: 'Bo3', tag: 'Rapide', detail: 'Meilleur des 3 sets' },
+  bo7: { title: 'BO7', tag: 'Marathon', detail: 'Meilleur des 7 sets' },
+  bo5: { title: 'BO5', tag: 'Classique', detail: 'Meilleur des 5 sets' },
+  bo3: { title: 'BO3', tag: 'Rapide', detail: 'Meilleur des 3 sets' },
+  champions: { title: 'Champions League', tag: 'Spécial', detail: 'Format à élimination' },
+};
+
+export const DISCIPLINE_INFO: Record<Discipline, string> = {
+  'ping-pong': 'Ping-pong',
+  hardbat: 'Hardbat',
 };

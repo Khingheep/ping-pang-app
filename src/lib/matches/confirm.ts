@@ -11,6 +11,7 @@ export async function proposeMatch(p: {
   bestOf?: number;
   feeling?: string | null;
   isRanked?: boolean;
+  setScores?: string | null;
 }): Promise<ProposeResult> {
   const { data, error } = await supabase.rpc('propose_match', {
     p_opponent: p.opponentId,
@@ -19,6 +20,7 @@ export async function proposeMatch(p: {
     p_best_of: p.bestOf ?? 5,
     p_is_ranked: p.isRanked ?? true,
     p_feeling: p.feeling ?? null,
+    p_set_scores: p.setScores ?? null,
   });
   if (error) throw error;
   return data as ProposeResult;

@@ -45,3 +45,18 @@ export function levelForElo(elo: number): Level {
 export function ffttPointsToElo(points: number): number {
   return Math.min(2600, Math.max(800, Math.round(1000 + points / 4)));
 }
+
+export type Objective = { target: number; toGain: number; pct: number; nextLabel: string | null };
+
+/**
+ * Objectif gamifié : prochain palier de niveau au-dessus de l'ELO actuel
+ * (ou la centaine suivante si déjà au dernier niveau). `pct` = avancement dans la tranche.
+ */
+export function computeObjective(elo: number): Objective {
+  const current = levelForElo(elo);
+  const next = LEVELS.find((l) => l.min > elo) ?? null;
+  const target = next ? next.min : Math.ceil((elo + 1) / 100) * 100;
+  const floor = current.min;
+  const pct = Math.max(0, Math.min(1, (elo - floor) / Math.max(1, target - floor)));
+  return { target, toGain: Math.max(0, target - elo), pct, nextLabel: next?.label ?? null };
+}

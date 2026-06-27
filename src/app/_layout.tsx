@@ -26,7 +26,7 @@ function RootNavigator() {
     const inOnboarding = segments[0] === 'onboarding';
     const publicRoute = inOnboarding || segments[0] === 'link-fftt';
     if (!session && !inAuthGroup && !publicRoute) {
-      router.replace('/login');
+      router.replace('/welcome');
     } else if (session && inAuthGroup) {
       router.replace('/');
     } else if (session && needsOnboarding && !inOnboarding) {
