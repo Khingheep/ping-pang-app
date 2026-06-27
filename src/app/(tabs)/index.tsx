@@ -27,7 +27,7 @@ import {
   type SessionFeedItem,
 } from '@/lib/training/sessions';
 
-const TABS = ['Entraînements', 'Matchs'] as const;
+const TABS = ['Entraînements', 'Activité'] as const;
 
 function relativeDate(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -118,7 +118,8 @@ export default function FeedScreen() {
   const name = profile?.display_name ?? 'Joueur';
   // Feed social : on ne montre pas ses propres séances (seulement celles des autres).
   const visibleSessions = sessions.filter((s) => s.author.id !== myId);
-  const visibleMatches = matchFeed.filter((f) => f.type === 'match');
+  // Onglet « Activité » : tout ce qui se passe (matchs, tournois gagnés, créneaux ouverts, nouveaux).
+  const visibleMatches = matchFeed;
 
   return (
     <View style={styles.root}>
@@ -272,19 +273,23 @@ export default function FeedScreen() {
             )
           ) : null}
 
-          {/* Matchs */}
+          {/* Activité */}
           {tab === 1 ? (
             visibleMatches.length === 0 ? (
               <View style={styles.empty}>
                 <ThemedText type="default" themeColor="textSecondary">
-                  Aucun match récent.
+                  Aucune activité récente.
                 </ThemedText>
               </View>
             ) : (
               <View style={styles.list}>
                 {visibleMatches.map((f) => (
                   <View key={f.id} style={styles.matchRow}>
-                    <Avatar name={f.actorName ?? '?'} size={40} color={Palette.lime} />
+                    <Avatar
+                      name={f.actorName ?? '?'}
+                      size={40}
+                      color={f.type === 'slot' ? Palette.blue : f.type === 'newcomer' ? Palette.purple : Palette.lime}
+                    />
                     <View style={{ flex: 1 }}>
                       <ThemedText type="cardTitle" numberOfLines={1}>
                         {f.title}

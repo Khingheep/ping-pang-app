@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase/client';
 
-export type FeedEventType = 'match' | 'newcomer';
+export type FeedEventType = 'match' | 'newcomer' | 'tournament' | 'slot';
 
 export type FeedEvent = {
   id: string;
