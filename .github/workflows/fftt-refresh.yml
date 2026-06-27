@@ -1,0 +1,44 @@
+name: Refresh FFTT session
+
+# Rafraîchit le PHPSESSID FFTT (résout le CAPTCHA via tesseract) et l'upload dans
+# la table Supabase `fftt_session`, lue par l'edge function `fftt`. Remplace la tâche
+# planifiée Windows : plus aucune dépendance à une machine locale.
+#
+# Secrets requis (repo → Settings → Secrets and variables → Actions) :
+#   SUPABASE_URL                = https://djwlpgvmmxmfbkvqbbyj.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY   = clé service_role (Supabase → Project Settings → API)
+
+on:
+  schedule:
+    - cron: '0 */2 * * *' # toutes les 2 heures (UTC)
+  workflow_dispatch: {} # bouton « Run workflow » pour un refresh manuel
+
+# Évite deux refresh simultanés.
+concurrency:
+  group: fftt-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: scripts/fftt
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: scripts/fftt/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Refresh & upload FFTT session
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run fftt -- refresh-session --fresh
