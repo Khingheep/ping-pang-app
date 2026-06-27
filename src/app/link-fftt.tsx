@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router } from 'expo-router';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,58 +17,35 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { linkFfttToProfile, searchFftt, searchFfttLocal, type FfttPlayer } from '@/lib/fftt/link';
-import { setPendingFftt } from '@/lib/fftt/pending';
-
-const SEXES: ('Hommes' | 'Femmes')[] = ['Hommes', 'Femmes'];
+import { linkFfttToProfile, searchFftt, type FfttPlayer } from '@/lib/fftt/link';
 
 export default function LinkFfttScreen() {
   const { session } = useAuth();
-  const { onboarding, sexe: sexeParam } = useLocalSearchParams<{ onboarding?: string; sexe?: string }>();
-  const isOnboarding = onboarding === '1';
-  const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
-  const [sexe, setSexe] = useState<'Hommes' | 'Femmes'>(sexeParam === 'Femmes' ? 'Femmes' : 'Hommes');
+  const [nom, setNom] = useState('');
   const [results, setResults] = useState<FfttPlayer[]>([]);
-  const [onlineLoading, setOnlineLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [linkingId, setLinkingId] = useState<string | null>(null);
-  const [online, setOnline] = useState(false);
 
-  // Typeahead local (miroir) — débounce 250ms à chaque frappe.
-  useEffect(() => {
-    setOnline(false);
-    const t = setTimeout(() => {
-      searchFfttLocal({ nom, prenom, sexe })
-        .then(setResults)
-        .catch(() => {});
-    }, 250);
-    return () => clearTimeout(t);
-  }, [nom, prenom, sexe]);
-
-  async function searchOnline() {
-    if (!nom.trim()) {
-      Alert.alert('Recherche', 'Entre au moins un nom pour chercher en ligne.');
+  async function search() {
+    if (nom.trim().length < 2) {
+      Alert.alert('Recherche', 'Entre au moins ton nom de famille.');
       return;
     }
     try {
-      setOnlineLoading(true);
-      const r = await searchFftt({ nom: nom.trim(), prenom: prenom.trim() || undefined, sexe });
+      setLoading(true);
+      const r = await searchFftt({ nom: nom.trim(), prenom: prenom.trim() || undefined });
       setResults(r);
-      setOnline(true);
+      setSearched(true);
     } catch (e) {
-      Alert.alert('FFTT', e instanceof Error ? e.message : 'Recherche en ligne impossible.');
+      Alert.alert('FFTT', e instanceof Error ? e.message : 'Recherche impossible.');
     } finally {
-      setOnlineLoading(false);
+      setLoading(false);
     }
   }
 
   async function link(p: FfttPlayer) {
-    if (isOnboarding) {
-      // Pendant l'onboarding : on renvoie le choix, le profil sera créé à la fin.
-      setPendingFftt(p);
-      router.back();
-      return;
-    }
     const id = session?.user?.id;
     if (!id) return;
     try {
@@ -91,49 +68,46 @@ export default function LinkFfttScreen() {
           <Pressable onPress={() => router.back()} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
-          <ThemedText type="cardTitle">{isOnboarding ? 'Trouver ma licence FFTT' : 'Lier mon compte FFTT'}</ThemedText>
+          <ThemedText type="cardTitle">Lier mon compte FFTT</ThemedText>
           <View style={{ width: 26 }} />
         </View>
 
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.form}>
-            {/* En onboarding, le sexe est déjà choisi avant — on ne demande que le nom (minimal). */}
-            {!isOnboarding ? (
-              <View style={styles.sexRow}>
-                {SEXES.map((s) => (
-                  <Pressable key={s} onPress={() => setSexe(s)} style={[styles.sexPill, sexe === s ? styles.on : styles.off]}>
-                    <ThemedText type="smallBold" themeColor={sexe === s ? 'onBrand' : 'text'}>
-                      {s}
-                    </ThemedText>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
             <TextInput
               style={styles.input}
-              placeholder="Ton nom de famille"
+              placeholder="Prénom"
+              placeholderTextColor={Palette.grey}
+              value={prenom}
+              onChangeText={setPrenom}
+              autoCapitalize="words"
+              autoFocus
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Nom"
               placeholderTextColor={Palette.grey}
               value={nom}
               onChangeText={setNom}
               autoCapitalize="characters"
-              autoFocus
+              onSubmitEditing={search}
+              returnKeyType="search"
             />
-            {!isOnboarding ? (
-              <TextInput
-                style={styles.input}
-                placeholder="Prénom (optionnel)"
-                placeholderTextColor={Palette.grey}
-                value={prenom}
-                onChangeText={setPrenom}
-              />
-            ) : null}
+            <Pressable style={[styles.searchBtn, loading && { opacity: 0.6 }]} disabled={loading} onPress={search}>
+              {loading ? (
+                <ActivityIndicator color={Palette.whitePP} />
+              ) : (
+                <>
+                  <Ionicons name="search" size={18} color={Palette.whitePP} />
+                  <ThemedText type="cardTitle" themeColor="onBrand">
+                    Rechercher
+                  </ThemedText>
+                </>
+              )}
+            </Pressable>
           </View>
 
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <ThemedText type="label" themeColor="textSecondary" style={styles.sectionLbl}>
-              {online ? 'Résultats FFTT' : results.length ? 'Suggestions' : ' '}
-            </ThemedText>
-
             {results.map((p) => (
               <View key={p.numberId} style={styles.card}>
                 <View style={styles.cardMain}>
@@ -151,26 +125,17 @@ export default function LinkFfttScreen() {
                     <ActivityIndicator color={Palette.onyx} />
                   ) : (
                     <ThemedText type="smallBold" themeColor="brand">
-                      {isOnboarding ? 'Choisir' : 'Lier'}
+                      Lier
                     </ThemedText>
                   )}
                 </Pressable>
               </View>
             ))}
 
-            {nom.trim().length >= 2 && !online ? (
-              <Pressable style={styles.onlineBtn} disabled={onlineLoading} onPress={searchOnline}>
-                {onlineLoading ? (
-                  <ActivityIndicator color={Palette.onyx} />
-                ) : (
-                  <>
-                    <Ionicons name="cloud-download-outline" size={18} color={Palette.onyx} />
-                    <ThemedText type="smallBold">
-                      {results.length ? 'Pas dans la liste ? Chercher sur FFTT' : 'Chercher sur FFTT (en ligne)'}
-                    </ThemedText>
-                  </>
-                )}
-              </Pressable>
+            {searched && results.length === 0 && !loading ? (
+              <ThemedText type="default" themeColor="textSecondary" style={styles.empty}>
+                Aucune licence trouvée à ce nom. Vérifie l’orthographe.
+              </ThemedText>
             ) : null}
           </ScrollView>
         </KeyboardAvoidingView>
@@ -189,11 +154,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
   },
-  form: { paddingHorizontal: Spacing.four, gap: Spacing.two, paddingBottom: Spacing.two },
-  sexRow: { flexDirection: 'row', gap: Spacing.two, marginBottom: Spacing.one },
-  sexPill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.sm, alignItems: 'center' },
-  on: { backgroundColor: Palette.evergreen },
-  off: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  form: { paddingHorizontal: Spacing.four, gap: Spacing.two, paddingBottom: Spacing.three },
   input: {
     height: 52,
     borderRadius: Radius.sm,
@@ -205,8 +166,17 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
+  searchBtn: {
+    height: 52,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.evergreen,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.one,
+  },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.two },
-  sectionLbl: { marginTop: Spacing.two, marginBottom: Spacing.one },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -226,16 +196,5 @@ const styles = StyleSheet.create({
     minWidth: 64,
     alignItems: 'center',
   },
-  onlineBtn: {
-    marginTop: Spacing.two,
-    height: 48,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-  },
+  empty: { marginTop: Spacing.four, textAlign: 'center' },
 });
