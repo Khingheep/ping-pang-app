@@ -221,24 +221,19 @@ export default function FeedScreen() {
                     </Pressable>
 
                     <View style={styles.cardBody}>
-                      <View style={{ flex: 1, gap: Spacing.half }}>
-                        <ThemedText type="cardTitle">
-                          {s.isSolo ? 'Séance solo' : 'Séance'}
-                          {s.strokes.length ? ` · ${s.strokes[0]}` : ''}
+                      <ThemedText type="cardTitle">
+                        {s.isSolo ? 'Séance solo' : 'Séance'}
+                        {s.strokes.length ? ` · ${s.strokes[0]}` : ''}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {formatDuration(s.durationMin)}
+                        {s.venueName ? ` · ${s.venueName}` : ''}
+                        {s.feeling ? ` · ${s.feeling}` : ''}
+                      </ThemedText>
+                      {s.note ? (
+                        <ThemedText type="default" numberOfLines={2} style={{ marginTop: Spacing.half }}>
+                          {s.note}
                         </ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {formatDuration(s.durationMin)}
-                          {s.venueName ? ` · ${s.venueName}` : ''}
-                          {s.feeling ? ` · ${s.feeling}` : ''}
-                        </ThemedText>
-                        {s.note ? (
-                          <ThemedText type="default" numberOfLines={2} style={{ marginTop: Spacing.half }}>
-                            {s.note}
-                          </ThemedText>
-                        ) : null}
-                      </View>
-                      {s.photoUrl ? (
-                        <Image source={{ uri: s.photoUrl }} style={styles.photo} contentFit="cover" />
                       ) : null}
                     </View>
 
@@ -252,6 +247,10 @@ export default function FeedScreen() {
                           </View>
                         ))}
                       </View>
+                    ) : null}
+
+                    {s.photoUrl ? (
+                      <Image source={{ uri: s.photoUrl }} style={styles.photoFull} contentFit="cover" transition={200} />
                     ) : null}
 
                     <View style={styles.cardFoot}>
@@ -351,8 +350,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  cardBody: { flexDirection: 'row', gap: Spacing.three, alignItems: 'flex-start' },
-  photo: { width: 84, height: 84, borderRadius: Radius.sm, backgroundColor: Palette.whitePP },
+  cardBody: { gap: Spacing.half },
+  photoFull: { width: '100%', height: 190, borderRadius: Radius.sm, backgroundColor: Palette.whitePP },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   cardFoot: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border, paddingTop: Spacing.two },
