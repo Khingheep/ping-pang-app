@@ -9,18 +9,20 @@ import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchOtherPlayers, type LeaderboardEntry } from '@/lib/players/profile';
-import {
-  fetchIncomingChallenges,
-  fetchRecentOpponents,
-  respondChallenge,
-  type Challenge,
-  type RecentOpponent,
-} from '@/lib/social/challenges';
+import { fetchIncomingChallenges, respondChallenge, type Challenge } from '@/lib/social/challenges';
+import { fetchMyTournaments, type Tournament } from '@/lib/tournaments/tournaments';
+
+const T_STATUS: Record<string, string> = {
+  open: 'Inscriptions ouvertes',
+  poules: 'Phase de poules',
+  bracket: 'Phase finale',
+  done: 'Terminé',
+};
 
 export default function DefisScreen() {
   const { session } = useAuth();
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
-  const [recent, setRecent] = useState<RecentOpponent[]>([]);
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [query, setQuery] = useState('');
   const [challenges, setChallenges] = useState<Challenge[]>([]);
 
@@ -30,7 +32,7 @@ export default function DefisScreen() {
       if (!id) return;
       fetchOtherPlayers(id, 100).then(setPlayers);
       fetchIncomingChallenges(id).then(setChallenges);
-      fetchRecentOpponents(id, 6).then(setRecent);
+      fetchMyTournaments(id).then(setTournaments);
     }, [session?.user?.id]),
   );
 
@@ -68,6 +70,32 @@ export default function DefisScreen() {
             </ThemedText>
           </Pressable>
 
+          {tournaments.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Mes tournois
+              </ThemedText>
+              <View style={styles.list}>
+                {tournaments.map((t) => (
+                  <Pressable key={t.id} style={styles.card} onPress={() => router.push({ pathname: '/tournoi', params: { id: t.id } })}>
+                    <View style={[styles.tIcon, { backgroundColor: t.status === 'done' ? Palette.lime : Palette.blue }]}>
+                      <Ionicons name="trophy" size={18} color={Palette.evergreen} />
+                    </View>
+                    <View style={styles.cardMain}>
+                      <ThemedText type="cardTitle" numberOfLines={1}>
+                        {t.name}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Code {t.code} · {T_STATUS[t.status] ?? t.status}
+                      </ThemedText>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : null}
+
           <TextInput
             style={styles.search}
             placeholder="Chercher un joueur..."
@@ -97,35 +125,6 @@ export default function DefisScreen() {
                     <Pressable style={styles.acceptBtn} onPress={() => accept(c)}>
                       <ThemedText type="smallBold" themeColor="onBrand">
                         Accepter
-                      </ThemedText>
-                    </Pressable>
-                  </View>
-                ))}
-              </View>
-            </>
-          ) : null}
-
-          {recent.length > 0 ? (
-            <>
-              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Adversaires récents
-              </ThemedText>
-              <View style={styles.list}>
-                {recent.map((o) => (
-                  <View key={o.id} style={styles.card}>
-                    <Pressable style={styles.cardLeft} onPress={() => goProfile(o.id)}>
-                      <Avatar name={o.name} size={48} color={Palette.purple} />
-                      <View style={styles.cardMain}>
-                        <ThemedText type="cardTitle">{o.name}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          ELO {o.elo}
-                          {o.city ? ` · ${o.city}` : ''}
-                        </ThemedText>
-                      </View>
-                    </Pressable>
-                    <Pressable style={styles.revanche} onPress={() => goChallenge(o)}>
-                      <ThemedText type="smallBold" themeColor="brand">
-                        Revanche
                       </ThemedText>
                     </Pressable>
                   </View>
@@ -249,10 +248,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
   },
-  revanche: {
-    backgroundColor: Palette.lime,
-    borderRadius: Radius.xs,
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
+  tIcon: { width: 36, height: 36, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
 });
