@@ -17,22 +17,11 @@ import {
   type RecentOpponent,
 } from '@/lib/social/challenges';
 
-const CITIES = ['Autour de moi', 'Paris', 'Lyon', 'Bordeaux'];
-
-function cityMatches(city: string | null, filter: number): boolean {
-  if (filter === 0) return true;
-  const c = (city ?? '').toLowerCase();
-  if (filter === 1) return c.includes('paris');
-  if (filter === 2) return c.includes('lyon');
-  return c.includes('bordeaux');
-}
-
 export default function DefisScreen() {
   const { session } = useAuth();
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [recent, setRecent] = useState<RecentOpponent[]>([]);
   const [query, setQuery] = useState('');
-  const [city, setCity] = useState(0);
   const [challenges, setChallenges] = useState<Challenge[]>([]);
 
   useFocusEffect(
@@ -64,7 +53,7 @@ export default function DefisScreen() {
   }
 
   const q = query.trim().toLowerCase();
-  const filtered = players.filter((p) => p.display_name.toLowerCase().includes(q) && cityMatches(p.city, city));
+  const filtered = players.filter((p) => p.display_name.toLowerCase().includes(q));
 
   return (
     <View style={styles.root}>
@@ -86,19 +75,6 @@ export default function DefisScreen() {
             value={query}
             onChangeText={setQuery}
           />
-
-          <View style={styles.cities}>
-            {CITIES.map((cLabel, i) => (
-              <Pressable
-                key={cLabel}
-                onPress={() => setCity(i)}
-                style={[styles.cityPill, city === i ? styles.cityActive : styles.cityIdle]}>
-                <ThemedText type="smallBold" themeColor={city === i ? 'onBrand' : 'text'}>
-                  {cLabel}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
 
           {challenges.length > 0 ? (
             <>
@@ -226,10 +202,6 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
-  cities: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.three },
-  cityPill: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
-  cityActive: { backgroundColor: Palette.evergreen },
-  cityIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   empty: {
     backgroundColor: Palette.white,

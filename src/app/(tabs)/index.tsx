@@ -116,7 +116,8 @@ export default function FeedScreen() {
   }
 
   const name = profile?.display_name ?? 'Joueur';
-  const visibleSessions = sessions;
+  // Feed social : on ne montre pas ses propres séances (seulement celles des autres).
+  const visibleSessions = sessions.filter((s) => s.author.id !== myId);
   const visibleMatches = matchFeed.filter((f) => f.type === 'match');
 
   return (
