@@ -12,7 +12,6 @@ import { assignPoules, pairWinners, seedBracketRound0 } from './bracket';
 export { computePouleStandings } from './bracket';
 
 export type TournamentFormat = 'bo3' | 'bo5' | 'bo7' | 'wtt' | 'champions';
-export type TournamentDiscipline = 'ping-pong' | 'hardbat';
 export type TournamentStatus = 'open' | 'poules' | 'bracket' | 'done';
 export type TournamentPhase = 'poule' | 'bracket';
 
@@ -22,7 +21,6 @@ export type Tournament = {
   name: string;
   owner_id: string;
   format: TournamentFormat;
-  discipline: TournamentDiscipline;
   max_players: number;
   players_per_poule: number;
   is_ranked: boolean;
@@ -140,7 +138,6 @@ export async function createTournament(
   p: {
     name: string;
     format: TournamentFormat;
-    discipline: TournamentDiscipline;
     maxPlayers: number;
     playersPerPoule: number;
     isRanked: boolean;
@@ -156,7 +153,6 @@ export async function createTournament(
         name: p.name,
         owner_id: ownerId,
         format: p.format,
-        discipline: p.discipline,
         max_players: p.maxPlayers,
         players_per_poule: p.playersPerPoule,
         is_ranked: p.isRanked,

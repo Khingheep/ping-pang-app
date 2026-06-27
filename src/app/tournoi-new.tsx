@@ -13,13 +13,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { DISCIPLINE_INFO, type Discipline } from '@/lib/social/challenges';
 import { createTournament, TOURNAMENT_FORMATS, type TournamentFormat } from '@/lib/tournaments/tournaments';
 
 const SIZES = [4, 8, 16, 32];
 const FORMATS: TournamentFormat[] = ['bo3', 'bo5', 'bo7', 'wtt', 'champions'];
 const PER_POULE = [3, 4, 5];
-const DISCIPLINES: Discipline[] = ['ping-pong', 'hardbat'];
 
 export default function NewTournamentScreen() {
   const { session } = useAuth();
@@ -27,7 +25,6 @@ export default function NewTournamentScreen() {
   const [size, setSize] = useState(8);
   const [format, setFormat] = useState<TournamentFormat>('bo5');
   const [perPoule, setPerPoule] = useState(4);
-  const [discipline, setDiscipline] = useState<Discipline>('ping-pong');
   const [ranked, setRanked] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -39,7 +36,6 @@ export default function NewTournamentScreen() {
       const t = await createTournament(me, {
         name: name.trim() || 'Mon tournoi',
         format,
-        discipline,
         maxPlayers: size,
         playersPerPoule: perPoule,
         isRanked: ranked,
@@ -96,19 +92,6 @@ export default function NewTournamentScreen() {
               <Pressable key={f} onPress={() => setFormat(f)} style={[styles.chipWide, format === f ? styles.chipOn : styles.chipOff]}>
                 <ThemedText type="smallBold" themeColor={format === f ? 'onBrand' : 'text'}>
                   {TOURNAMENT_FORMATS[f].label}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            DISCIPLINE
-          </ThemedText>
-          <View style={styles.chipRow}>
-            {DISCIPLINES.map((d) => (
-              <Pressable key={d} onPress={() => setDiscipline(d)} style={[styles.chipFlex, discipline === d ? styles.chipOn : styles.chipOff]}>
-                <ThemedText type="smallBold" themeColor={discipline === d ? 'onBrand' : 'text'}>
-                  {DISCIPLINE_INFO[d]}
                 </ThemedText>
               </Pressable>
             ))}
