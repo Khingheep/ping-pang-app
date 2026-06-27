@@ -27,6 +27,16 @@ export async function fetchVenues(): Promise<Venue[]> {
   return (data as Venue[] | null) ?? [];
 }
 
+/** Lieux curatés uniquement (le club + spots ajoutés à la main), pas le dump OpenStreetMap. */
+export async function fetchFeaturedVenues(): Promise<Venue[]> {
+  const { data } = await supabase
+    .from('venues')
+    .select('id, name, address, indoor, lat, lng')
+    .neq('source', 'openstreetmap')
+    .order('name', { ascending: true });
+  return (data as Venue[] | null) ?? [];
+}
+
 export async function fetchVenue(id: string): Promise<Venue | null> {
   const { data } = await supabase
     .from('venues')
