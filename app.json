@@ -20,7 +20,12 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "single",
@@ -48,11 +53,25 @@
         {
           "color": "#092C25"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Ping Pang accède à tes photos pour choisir ton avatar.",
+          "cameraPermission": "Ping Pang utilise la caméra pour prendre ta photo de profil."
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "866c2335-f3f0-4774-b0dc-7fa7028f2e9f"
+      }
+    },
+    "owner": "walid92z"
   }
 }

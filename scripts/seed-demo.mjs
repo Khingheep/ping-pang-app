@@ -14,14 +14,16 @@ const LEVELS = [
 ];
 const levelFor = (elo) => (LEVELS.find(([, min]) => elo >= min) ?? LEVELS[LEVELS.length - 1])[0];
 
+// lat/lng = vraie position : les joueurs parisiens apparaissent « près de toi » dans
+// l'onglet Défis (tri par distance), les autres villes restent loin (démo réaliste).
 const demos = [
-  { email: 'wei@demo.pingpang.paris', name: 'Wei Z.', city: 'Shanghai', elo: 2340 },
-  { email: 'lucas@demo.pingpang.paris', name: 'Lucas M.', city: 'Paris', elo: 2180 },
-  { email: 'ana@demo.pingpang.paris', name: 'Ana S.', city: 'Madrid', elo: 2050 },
-  { email: 'emma@demo.pingpang.paris', name: 'Emma T.', city: 'Berlin', elo: 1740 },
-  { email: 'yuki@demo.pingpang.paris', name: 'Yuki K.', city: 'Tokyo', elo: 1690 },
-  { email: 'maxime@demo.pingpang.paris', name: 'Maxime L.', city: 'Paris 11e', elo: 1320 },
-  { email: 'thomas@demo.pingpang.paris', name: 'Thomas D.', city: 'Paris', elo: 1240 },
+  { email: 'wei@demo.pingpang.paris', name: 'Wei Z.', city: 'Shanghai', elo: 2340, lat: 31.2304, lng: 121.4737 },
+  { email: 'lucas@demo.pingpang.paris', name: 'Lucas M.', city: 'Paris', elo: 2180, lat: 48.8579, lng: 2.3553 },
+  { email: 'ana@demo.pingpang.paris', name: 'Ana S.', city: 'Madrid', elo: 2050, lat: 40.4168, lng: -3.7038 },
+  { email: 'emma@demo.pingpang.paris', name: 'Emma T.', city: 'Berlin', elo: 1740, lat: 52.52, lng: 13.405 },
+  { email: 'yuki@demo.pingpang.paris', name: 'Yuki K.', city: 'Tokyo', elo: 1690, lat: 35.6762, lng: 139.6503 },
+  { email: 'maxime@demo.pingpang.paris', name: 'Maxime L.', city: 'Paris 11e', elo: 1320, lat: 48.8589, lng: 2.3765 },
+  { email: 'thomas@demo.pingpang.paris', name: 'Thomas D.', city: 'Paris', elo: 1240, lat: 48.853, lng: 2.37 },
 ];
 
 async function ensureUser(email, name) {
@@ -42,7 +44,7 @@ for (const d of demos) {
     console.log('SKIP (no id):', d.email);
     continue;
   }
-  rows.push({ id, handle: d.email.split('@')[0], display_name: d.name, city: d.city, elo: d.elo, level: levelFor(d.elo) });
+  rows.push({ id, handle: d.email.split('@')[0], display_name: d.name, city: d.city, elo: d.elo, level: levelFor(d.elo), lat: d.lat, lng: d.lng });
 }
 
 const up = await fetch(`${BASE}/rest/v1/players`, {

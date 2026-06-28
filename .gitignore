@@ -55,3 +55,6 @@ dist-web/
 
 # Supabase CLI local state
 supabase/.temp/
+
+# generated docs
+doc/
