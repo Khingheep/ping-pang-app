@@ -51,9 +51,11 @@ function RootNavigator() {
       <Stack.Screen name="post-match" options={{ presentation: 'modal' }} />
       <Stack.Screen name="settings" />
       <Stack.Screen name="player" />
+      <Stack.Screen name="session" />
+      <Stack.Screen name="match" />
       <Stack.Screen name="venue" />
       <Stack.Screen name="link-fftt" />
-      <Stack.Screen name="tournoi" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="tournoi" />
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="messages" />
       <Stack.Screen name="chat" />
