@@ -1,19 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { coachUrl, fetchCoaches, type Coach } from '@/lib/podplay/coaches';
 import {
+  fetchSessionTemplates,
   fetchTrainingSessions,
   fetchTrainingStats,
   formatDuration,
   formatHours,
+  type SessionTemplate,
   type TrainingSession,
   type TrainingStats,
 } from '@/lib/training/sessions';
@@ -25,15 +25,15 @@ export default function TrainScreen() {
   const { session } = useAuth();
   const [stats, setStats] = useState<TrainingStats | null>(null);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
-  const [coaches, setCoaches] = useState<Coach[]>([]);
+  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
 
   const load = useCallback(() => {
     const id = session?.user?.id;
     if (id) {
       fetchTrainingStats(id).then(setStats);
       fetchTrainingSessions(id, 5).then(setSessions);
+      fetchSessionTemplates(id).then(setTemplates).catch(() => {});
     }
-    fetchCoaches().then(setCoaches);
   }, [session?.user?.id]);
 
   useFocusEffect(load);
@@ -53,6 +53,40 @@ export default function TrainScreen() {
               Renseigner mon entraînement
             </ThemedText>
           </Pressable>
+
+          {/* Raccourcis : répéter une séance récente */}
+          {templates.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tplRow}
+              style={styles.tplScroll}>
+              {templates.map((t) => {
+                const partnerLabel = t.isSolo ? 'Solo' : t.partner?.name ?? t.partnerLevel ?? null;
+                return (
+                  <Pressable
+                    key={t.id}
+                    style={styles.tplCard}
+                    onPress={() => router.push({ pathname: '/new-training', params: { template: t.id } })}>
+                    <View style={styles.tplHead}>
+                      <ThemedText type="cardTitle" themeColor="brand">
+                        {formatDuration(t.durationMin)}
+                      </ThemedText>
+                      <Ionicons name="repeat" size={16} color={Palette.evergreen} />
+                    </View>
+                    <ThemedText type="small" numberOfLines={2}>
+                      {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
+                    </ThemedText>
+                    {partnerLabel || t.venueName ? (
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                        {[partnerLabel, t.venueName].filter(Boolean).join(' · ')}
+                      </ThemedText>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          ) : null}
 
           {/* Hero total */}
           <View style={styles.hero}>
@@ -130,35 +164,6 @@ export default function TrainScreen() {
             </>
           ) : null}
 
-          {/* Coachs */}
-          {coaches.length > 0 ? (
-            <>
-              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Coachs du club
-              </ThemedText>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.coachRow}>
-                {coaches.map((c) => (
-                  <Pressable
-                    key={c.id}
-                    style={styles.coachCard}
-                    onPress={() => c.slug && Linking.openURL(coachUrl(c.slug))}>
-                    {c.picture_url ? (
-                      <Image source={{ uri: c.picture_url }} style={styles.coachPic} contentFit="cover" />
-                    ) : (
-                      <View style={[styles.coachPic, styles.coachPicEmpty]} />
-                    )}
-                    <ThemedText type="smallBold" numberOfLines={1} style={styles.coachName}>
-                      {c.first_name} {c.last_name}
-                    </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {c.hourly_rate}€/h
-                    </ThemedText>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </>
-          ) : null}
-
           {/* Mes séances (récentes) */}
           <View style={styles.seancesHead}>
             <ThemedText type="sectionTitle" themeColor="textSecondary">
@@ -179,7 +184,10 @@ export default function TrainScreen() {
           ) : (
             <View style={{ gap: Spacing.two }}>
               {sessions.map((s) => (
-                <View key={s.id} style={styles.histRow}>
+                <Pressable
+                  key={s.id}
+                  style={styles.histRow}
+                  onPress={() => router.push({ pathname: '/session', params: { id: s.id } })}>
                   <View style={{ flex: 1 }}>
                     <ThemedText type="cardTitle">
                       {formatDuration(s.duration_min)}
@@ -193,7 +201,8 @@ export default function TrainScreen() {
                   <ThemedText type="small" themeColor="textMuted">
                     {new Date(s.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                   </ThemedText>
-                </View>
+                  <Ionicons name="chevron-forward" size={18} color={Palette.textMuted} />
+                </Pressable>
               ))}
             </View>
           )}
@@ -217,6 +226,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.two,
   },
+  tplScroll: { marginTop: Spacing.three },
+  tplRow: { gap: Spacing.two, paddingRight: Spacing.four },
+  tplCard: {
+    width: 168,
+    gap: Spacing.one,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
+  tplHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   hero: {
     marginTop: Spacing.four,
     backgroundColor: Palette.evergreen,
@@ -250,11 +271,6 @@ const styles = StyleSheet.create({
   chartCol: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
   barWrap: { height: CHART_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' },
   chartLbl: { marginTop: Spacing.one, fontSize: 9 },
-  coachRow: { gap: Spacing.three, paddingVertical: Spacing.one, paddingRight: Spacing.four },
-  coachCard: { width: 96, alignItems: 'center', gap: Spacing.half },
-  coachPic: { width: 96, height: 96, borderRadius: Radius.md, backgroundColor: Palette.white },
-  coachPicEmpty: { borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  coachName: { marginTop: Spacing.one, textAlign: 'center' },
   seancesHead: {
     marginTop: Spacing.five,
     marginBottom: Spacing.two,

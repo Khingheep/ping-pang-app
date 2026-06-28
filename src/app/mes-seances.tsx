@@ -66,7 +66,10 @@ export default function MesSeancesScreen() {
           ) : (
             <View style={styles.list}>
               {sessions.map((s) => (
-                <View key={s.id} style={styles.card}>
+                <Pressable
+                  key={s.id}
+                  style={styles.card}
+                  onPress={() => router.push({ pathname: '/session', params: { id: s.id } })}>
                   <View style={[styles.bar, { backgroundColor: (s.feeling && FEELING_COLOR[s.feeling]) || Palette.border }]} />
                   <View style={styles.cardMain}>
                     <ThemedText type="cardTitle">{sessionDate(s.created_at)}</ThemedText>
@@ -86,7 +89,7 @@ export default function MesSeancesScreen() {
                       </ThemedText>
                     ) : null}
                   </View>
-                </View>
+                </Pressable>
               ))}
             </View>
           )}

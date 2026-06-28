@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { createSlot, type SlotFormat } from '@/lib/slots/slots';
+import { notify } from '@/lib/ui/alert';
 
 const HOURS = Array.from({ length: 15 }, (_, i) => i + 8); // 8h → 22h
 const DURATIONS = [
@@ -50,14 +51,14 @@ export default function NewSlotScreen() {
   async function publish() {
     const me = session?.user?.id;
     if (!me || !venueId) {
-      Alert.alert('Lieu manquant', 'Reviens en arrière et choisis un lieu.');
+      notify('Lieu manquant', 'Reviens en arrière et choisis un lieu.');
       return;
     }
     const start = new Date();
     start.setDate(start.getDate() + dayOffset);
     start.setHours(hour, 0, 0, 0);
     if (start.getTime() < Date.now()) {
-      Alert.alert('Créneau passé', 'Choisis un horaire à venir.');
+      notify('Créneau passé', 'Choisis un horaire à venir.');
       return;
     }
     const end = new Date(start.getTime() + durationMin * 60000);
@@ -73,11 +74,10 @@ export default function NewSlotScreen() {
         levelMin: lvl.min,
         levelMax: lvl.max,
       });
-      Alert.alert('Créneau publié 🏓', 'Les joueurs de la zone ont été notifiés.', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      notify('Créneau publié 🏓', 'Les joueurs de la zone ont été notifiés.');
+      router.back();
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
       setBusy(false);
     }

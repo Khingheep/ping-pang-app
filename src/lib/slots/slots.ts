@@ -7,6 +7,8 @@ export type Slot = {
   id: string;
   venueId: string;
   venueName: string;
+  venueLat: number | null;
+  venueLng: number | null;
   hostId: string;
   hostName: string;
   startsAt: string;
@@ -27,18 +29,20 @@ type Row = {
   level_min: number | null;
   level_max: number | null;
   host: { display_name: string } | null;
-  venues: { name: string } | null;
+  venues: { name: string; lat: number | null; lng: number | null } | null;
   slot_participants: { player_id: string; players: { display_name: string; elo: number } | null }[];
 };
 
 const SELECT =
-  'id, venue_id, host_id, starts_at, ends_at, format, level_min, level_max, host:host_id(display_name), venues(name), slot_participants(player_id, players(display_name, elo))';
+  'id, venue_id, host_id, starts_at, ends_at, format, level_min, level_max, host:host_id(display_name), venues(name, lat, lng), slot_participants(player_id, players(display_name, elo))';
 
 function mapRow(r: Row): Slot {
   return {
     id: r.id,
     venueId: r.venue_id,
     venueName: r.venues?.name ?? 'Lieu',
+    venueLat: r.venues?.lat ?? null,
+    venueLng: r.venues?.lng ?? null,
     hostId: r.host_id,
     hostName: r.host?.display_name ?? 'Joueur',
     startsAt: r.starts_at,
