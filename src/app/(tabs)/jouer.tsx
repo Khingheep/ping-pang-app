@@ -1,16 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { type Href, router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { fetchOtherPlayers, type LeaderboardEntry } from '@/lib/players/profile';
+import { distanceKm, formatDistance, type LatLng } from '@/lib/location/distance';
+import { useUserLocation } from '@/lib/location/use-location';
+import { fetchOtherPlayers, type LeaderboardEntry, updateMyLocation } from '@/lib/players/profile';
 import { fetchIncomingChallenges, respondChallenge, type Challenge } from '@/lib/social/challenges';
 import { fetchMyTournaments, joinTournamentByCode, type Tournament } from '@/lib/tournaments/tournaments';
+import { notify } from '@/lib/ui/alert';
 
 const T_STATUS: Record<string, string> = {
   open: 'Inscriptions ouvertes',
@@ -19,8 +22,23 @@ const T_STATUS: Record<string, string> = {
   done: 'Terminé',
 };
 
+// Au-delà, on ne parle plus de « près de toi » : on affiche la ville plutôt qu'une distance absurde.
+const NEARBY_MAX_KM = 150;
+
+/**
+ * Distance utilisateur → joueur en km, ou Infinity si la position manque/est invalide.
+ * On traite (0,0) comme « pas de position » (valeur par défaut héritée, au large de l'Afrique)
+ * pour éviter d'afficher « à 2000 km » à des joueurs qui n'ont jamais partagé leur position.
+ */
+function kmTo(from: LatLng | null, lat: number | null, lng: number | null): number {
+  if (!from || lat == null || lng == null) return Infinity;
+  if (lat === 0 && lng === 0) return Infinity;
+  return distanceKm(from, { lat, lng });
+}
+
 export default function DefisScreen() {
   const { session } = useAuth();
+  const { coords } = useUserLocation();
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [query, setQuery] = useState('');
@@ -37,6 +55,13 @@ export default function DefisScreen() {
       fetchMyTournaments(id).then(setTournaments);
     }, [session?.user?.id]),
   );
+
+  // Dès qu'on a la vraie position, on la mémorise pour soi (et pour apparaître
+  // chez les autres dans « Joueurs près de toi »).
+  useEffect(() => {
+    const id = session?.user?.id;
+    if (id && coords) void updateMyLocation(id, coords);
+  }, [session?.user?.id, coords]);
 
   function goChallenge(p: { id: string; name: string; elo: number; city: string | null }) {
     router.push({
@@ -65,14 +90,19 @@ export default function DefisScreen() {
       setCode('');
       router.push({ pathname: '/tournoi', params: { id: tid } });
     } catch (e) {
-      Alert.alert('Code invalide', e instanceof Error ? e.message : 'Réessaie.');
+      notify('Code invalide', e instanceof Error ? e.message : 'Réessaie.');
     } finally {
       setJoining(false);
     }
   }
 
   const q = query.trim().toLowerCase();
-  const filtered = players.filter((p) => p.display_name.toLowerCase().includes(q));
+  // Filtré par recherche, puis trié par proximité quand on a la position (sinon par ELO).
+  const filtered = useMemo(() => {
+    const list = players.filter((p) => p.display_name.toLowerCase().includes(q));
+    if (!coords) return list;
+    return [...list].sort((a, b) => kmTo(coords, a.lat, a.lng) - kmTo(coords, b.lat, b.lng));
+  }, [players, q, coords]);
 
   return (
     <View style={styles.root}>
@@ -183,7 +213,10 @@ export default function DefisScreen() {
             </View>
           ) : (
             <View style={styles.list}>
-              {filtered.map((p) => (
+              {filtered.map((p) => {
+                const km = kmTo(coords, p.lat, p.lng);
+                const near = Number.isFinite(km) && km <= NEARBY_MAX_KM; // distance affichée seulement si vraiment proche
+                return (
                 <View key={p.id} style={styles.card}>
                   <Pressable style={styles.cardLeft} onPress={() => goProfile(p.id)}>
                     <Avatar name={p.display_name} size={48} />
@@ -191,7 +224,7 @@ export default function DefisScreen() {
                       <ThemedText type="cardTitle">{p.display_name}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary">
                         ELO {p.elo}
-                        {p.city ? ` · ${p.city}` : ''}
+                        {near ? ` · à ${formatDistance(km)}` : p.city ? ` · ${p.city}` : ''}
                       </ThemedText>
                     </View>
                   </Pressable>
@@ -203,7 +236,8 @@ export default function DefisScreen() {
                     </ThemedText>
                   </Pressable>
                 </View>
-              ))}
+                );
+              })}
             </View>
           )}
         </ScrollView>

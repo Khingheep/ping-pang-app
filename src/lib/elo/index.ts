@@ -60,3 +60,13 @@ export function computeObjective(elo: number): Objective {
   const pct = Math.max(0, Math.min(1, (elo - floor) / Math.max(1, target - floor)));
   return { target, toGain: Math.max(0, target - elo), pct, nextLabel: next?.label ?? null };
 }
+
+/**
+ * Objectif d'ELO fixé manuellement : progression de `start` (ELO au moment où l'objectif
+ * a été posé) vers `target`. `nextLabel` reprend le palier de niveau correspondant à la cible.
+ */
+export function manualObjective(elo: number, target: number, start: number): Objective {
+  const span = Math.max(1, target - start);
+  const pct = Math.max(0, Math.min(1, (elo - start) / span));
+  return { target, toGain: Math.max(0, target - elo), pct, nextLabel: levelForElo(target).label };
+}

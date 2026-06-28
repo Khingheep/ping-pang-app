@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -10,6 +10,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { proposeMatch } from '@/lib/matches/confirm';
 import { countSets, formatSetScores, validateMatch, type SetScore } from '@/lib/matches/sets';
+import { notify } from '@/lib/ui/alert';
 
 const FEELINGS = ['💪', '🔥', '😅', '😐', '😩'];
 const BEST_OF = [3, 5, 7];
@@ -39,12 +40,12 @@ export default function NewMatchScreen() {
 
   async function submit() {
     if (!opponentId) {
-      Alert.alert('Adversaire manquant', 'Reviens en arrière et choisis un joueur à défier.');
+      notify('Adversaire manquant', 'Reviens en arrière et choisis un joueur à défier.');
       return;
     }
     const valid = validateMatch(numericSets(sets), bestOf);
     if (!valid.ok) {
-      Alert.alert('Score invalide', valid.error ?? 'Vérifie les manches.');
+      notify('Score invalide', valid.error ?? 'Vérifie les manches.');
       return;
     }
     try {
@@ -52,14 +53,14 @@ export default function NewMatchScreen() {
       const setScores = formatSetScores(numericSets(sets));
       const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling, setScores: setScores || null });
       const sign = r.preview_delta > 0 ? '+' : '';
-      Alert.alert(
+      notify(
         'Match envoyé 📨',
         `En attente de la confirmation de ${opponentName ?? 'ton adversaire'}.\n` +
           `Une fois validé : ${sign}${r.preview_delta} ELO (estimation).`,
-        [{ text: 'OK', onPress: () => router.back() }],
       );
+      router.back();
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
       setBusy(false);
     }

@@ -7,6 +7,7 @@ function mv(o: Partial<MatchView>): MatchView {
   return {
     id: 'm',
     opponent: 'x',
+    opponentId: 'opp',
     score: '3-0',
     setScores: null,
     won: true,
@@ -16,6 +17,9 @@ function mv(o: Partial<MatchView>): MatchView {
     status: 'confirmed',
     iProposed: true,
     format: 'WTT',
+    likeCount: 0,
+    liked: false,
+    commentCount: 0,
     ...o,
   };
 }
