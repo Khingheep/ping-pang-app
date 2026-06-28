@@ -8,8 +8,8 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -17,6 +17,8 @@ import { ThemedText } from '@/components/themed-text';
 import { VenueMap } from '@/components/venue-map';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { distanceKm, formatDistance, type LatLng } from '@/lib/location/distance';
+import { useUserLocation } from '@/lib/location/use-location';
 import {
   fetchUpcomingSlots,
   FORMAT_LABEL,
@@ -26,6 +28,7 @@ import {
   slotTimeLabel,
   type Slot,
 } from '@/lib/slots/slots';
+import { notify } from '@/lib/ui/alert';
 import { fetchEvents, fetchFeaturedVenues, type EventPP, type Venue } from '@/lib/venues/venues';
 
 const MAP_HEIGHT = 200;
@@ -35,9 +38,16 @@ function eventDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+/** Distance utilisateur → point en km, ou Infinity si l'un des deux manque (→ trié en fin). */
+function kmTo(from: LatLng | null, lat: number | null, lng: number | null): number {
+  if (!from || lat == null || lng == null) return Infinity;
+  return distanceKm(from, { lat, lng });
+}
+
 export default function PartiesScreen() {
   const { session } = useAuth();
   const myId = session?.user?.id;
+  const { coords } = useUserLocation();
   const [venues, setVenues] = useState<Venue[]>([]);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [events, setEvents] = useState<EventPP[]>([]);
@@ -51,8 +61,20 @@ export default function PartiesScreen() {
 
   useFocusEffect(load);
 
-  const club = venues.find((v) => /ping\s*pang\s*paris/i.test(v.name)) ?? null;
-  const otherVenues = venues.filter((v) => v.id !== club?.id);
+  const club = useMemo(() => venues.find((v) => /ping\s*pang\s*paris/i.test(v.name)) ?? null, [venues]);
+
+  // Lieux (hors club) triés par proximité quand on a la position.
+  const otherVenues = useMemo(() => {
+    const list = venues.filter((v) => v.id !== club?.id);
+    if (!coords) return list;
+    return [...list].sort((a, b) => kmTo(coords, a.lat, a.lng) - kmTo(coords, b.lat, b.lng));
+  }, [venues, club, coords]);
+
+  // Créneaux triés par proximité du lieu quand on a la position (sinon ordre par heure).
+  const sortedSlots = useMemo(() => {
+    if (!coords) return slots;
+    return [...slots].sort((a, b) => kmTo(coords, a.venueLat, a.venueLng) - kmTo(coords, b.venueLat, b.venueLng));
+  }, [slots, coords]);
 
   const openVenue = (v: Venue) =>
     router.push({ pathname: '/venue', params: { id: v.id, name: v.name, address: v.address ?? '', indoor: String(!!v.indoor) } });
@@ -66,7 +88,7 @@ export default function PartiesScreen() {
       else await joinSlot(s.id, myId);
       load();
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie.');
     } finally {
       setBusyId(null);
     }
@@ -109,7 +131,7 @@ export default function PartiesScreen() {
           {/* Carte des lieux curatés */}
           {venues.length ? (
             <View style={styles.mapWrap}>
-              <VenueMap venues={venues} />
+              <VenueMap venues={venues} user={coords} />
             </View>
           ) : null}
 
@@ -125,7 +147,7 @@ export default function PartiesScreen() {
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Créneaux ouverts{slots.length ? ` (${slots.length})` : ''}
           </ThemedText>
-          {slots.length === 0 ? (
+          {sortedSlots.length === 0 ? (
             <View style={styles.empty}>
               <ThemedText type="default" themeColor="textSecondary">
                 Aucune partie ouverte. Crée le premier créneau et invite le club ! 🏓
@@ -133,9 +155,10 @@ export default function PartiesScreen() {
             </View>
           ) : (
             <View style={styles.list}>
-              {slots.map((s) => {
+              {sortedSlots.map((s) => {
                 const isHost = s.hostId === myId;
                 const joined = s.participants.some((p) => p.id === myId);
+                const km = kmTo(coords, s.venueLat, s.venueLng);
                 return (
                   <View key={s.id} style={styles.slotCard}>
                     <Avatar name={s.hostName} size={44} color={Palette.purple} />
@@ -145,6 +168,7 @@ export default function PartiesScreen() {
                       </ThemedText>
                       <ThemedText type="small" themeColor="textSecondary">
                         {slotTimeLabel(s.startsAt, s.endsAt)}
+                        {Number.isFinite(km) ? ` · à ${formatDistance(km)}` : ''}
                       </ThemedText>
                       <ThemedText type="small" themeColor="textMuted">
                         {FORMAT_LABEL[s.format]} · {levelLabel(s.levelMin, s.levelMax)} · {s.participants.length} joueur
@@ -180,24 +204,33 @@ export default function PartiesScreen() {
                 Où jouer
               </ThemedText>
               <View style={styles.list}>
-                {otherVenues.map((v) => (
-                  <Pressable key={v.id} style={styles.venueCard} onPress={() => openVenue(v)}>
-                    <View style={[styles.pin, { backgroundColor: v.indoor ? Palette.blue : Palette.lime }]}>
-                      <Ionicons name={v.indoor ? 'home' : 'sunny'} size={18} color={Palette.onyx} />
-                    </View>
-                    <View style={styles.slotMain}>
-                      <ThemedText type="cardTitle" numberOfLines={1}>
-                        {v.name}
-                      </ThemedText>
-                      {v.address ? (
-                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                          {v.address}
+                {otherVenues.map((v) => {
+                  const km = kmTo(coords, v.lat, v.lng);
+                  return (
+                    <Pressable key={v.id} style={styles.venueCard} onPress={() => openVenue(v)}>
+                      <View style={[styles.pin, { backgroundColor: v.indoor ? Palette.blue : Palette.lime }]}>
+                        <Ionicons name={v.indoor ? 'home' : 'sunny'} size={18} color={Palette.onyx} />
+                      </View>
+                      <View style={styles.slotMain}>
+                        <ThemedText type="cardTitle" numberOfLines={1}>
+                          {v.name}
                         </ThemedText>
-                      ) : null}
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color={Palette.grey} />
-                  </Pressable>
-                ))}
+                        {v.address ? (
+                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                            {v.address}
+                          </ThemedText>
+                        ) : null}
+                      </View>
+                      {Number.isFinite(km) ? (
+                        <ThemedText type="smallBold" themeColor="textSecondary">
+                          {formatDistance(km)}
+                        </ThemedText>
+                      ) : (
+                        <Ionicons name="chevron-forward" size={16} color={Palette.grey} />
+                      )}
+                    </Pressable>
+                  );
+                })}
               </View>
             </>
           ) : null}

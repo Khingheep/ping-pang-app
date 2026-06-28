@@ -46,6 +46,59 @@ export async function fetchVenue(id: string): Promise<Venue | null> {
   return (data as Venue | null) ?? null;
 }
 
+/** Distance à vol d'oiseau entre deux points GPS, en kilomètres (formule de haversine). */
+export function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371; // rayon terrestre moyen en km
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Lieu le plus proche d'une position GPS parmi ceux qui ont des coordonnées. */
+export function nearestVenue(
+  lat: number,
+  lng: number,
+  venues: Venue[],
+): { venue: Venue; distanceKm: number } | null {
+  let best: { venue: Venue; distanceKm: number } | null = null;
+  for (const v of venues) {
+    if (v.lat == null || v.lng == null) continue;
+    const d = distanceKm(lat, lng, v.lat, v.lng);
+    if (!best || d < best.distanceKm) best = { venue: v, distanceKm: d };
+  }
+  return best;
+}
+
+/** Minuscule sans accents/diacritiques, pour une recherche tolérante (« ile » trouve « Île »). */
+export function foldText(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+/**
+ * Enregistre un lieu saisi à la main, introuvable dans la base, pour relecture côté dev.
+ * Best-effort : n'interrompt jamais l'enregistrement de la séance si l'insert échoue.
+ */
+export async function suggestVenue(
+  playerId: string,
+  label: string,
+  coords?: { lat: number; lng: number } | null,
+): Promise<void> {
+  try {
+    await supabase.from('venue_suggestions').insert({
+      player_id: playerId,
+      label: label.trim(),
+      lat: coords?.lat ?? null,
+      lng: coords?.lng ?? null,
+    });
+  } catch {
+    /* proposition de lieu optionnelle : on ignore l'échec */
+  }
+}
+
 export async function fetchEvents(): Promise<EventPP[]> {
   const { data } = await supabase
     .from('events_ppp')

@@ -1,13 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { distanceLabel } from '@/lib/location/distance';
+import { useUserLocation } from '@/lib/location/use-location';
 import {
   FORMAT_LABEL,
   fetchSlotsForVenue,
@@ -17,6 +19,7 @@ import {
   slotTimeLabel,
   type Slot,
 } from '@/lib/slots/slots';
+import { notify } from '@/lib/ui/alert';
 import { fetchVenue, type Venue } from '@/lib/venues/venues';
 
 export default function VenueScreen() {
@@ -28,6 +31,7 @@ export default function VenueScreen() {
   }>();
   const { session } = useAuth();
   const myId = session?.user?.id;
+  const { coords } = useUserLocation();
   const [slots, setSlots] = useState<Slot[]>([]);
   const [venue, setVenue] = useState<Venue | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -48,7 +52,7 @@ export default function VenueScreen() {
       else await joinSlot(s.id, myId);
       load();
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie.');
     } finally {
       setBusy(null);
     }
@@ -57,6 +61,7 @@ export default function VenueScreen() {
   const vName = venue?.name ?? name ?? 'Lieu';
   const vAddress = venue?.address ?? address ?? null;
   const isIndoor = venue ? !!venue.indoor : indoor === 'true';
+  const distLabel = venue ? distanceLabel(coords, { lat: venue.lat, lng: venue.lng }) : null;
 
   return (
     <View style={styles.root}>
@@ -77,6 +82,15 @@ export default function VenueScreen() {
                 {isIndoor ? 'Intérieur' : 'Extérieur'}
               </ThemedText>
             </View>
+            {distLabel ? (
+              <View style={styles.distBadge}>
+                <Ionicons name="navigate" size={12} color={Palette.evergreen} />
+                <ThemedText type="smallBold" themeColor="brand">
+                  {' '}
+                  {distLabel}
+                </ThemedText>
+              </View>
+            ) : null}
             {vAddress ? (
               <ThemedText type="small" themeColor="textSecondary" style={{ flex: 1 }}>
                 {vAddress}
@@ -182,6 +196,16 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.three },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: Spacing.one },
   badge: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
+  distBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.half,
+  },
   cta: {
     marginTop: Spacing.two,
     height: 54,
