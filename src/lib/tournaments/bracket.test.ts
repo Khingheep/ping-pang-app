@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { assignPoules, computePouleStandings, pairWinners, poulesOf, seedBracketRound0 } from './bracket';
+import { assignPoules, computePouleStandings, numPoulesForPlayers, pairWinners, poulesOf, seedBracketRound0 } from './bracket';
 import type { TournamentMatch, TournamentPlayer } from './tournaments';
 
 function player(id: string, elo: number, poule: string | null = null, seed: number | null = null): TournamentPlayer {
@@ -23,12 +23,26 @@ function pmatch(poule: string, a: string, b: string, winner: string | null): Tou
   };
 }
 
+describe('numPoulesForPlayers — puissance de 2, poules de 3 à 5', () => {
+  it('garde des poules de 3 à 5 et un nombre de poules en puissance de 2', () => {
+    const cases: [number, number][] = [
+      [4, 1], [6, 2], [8, 2], [12, 4], [16, 4], [20, 4], [24, 8], [32, 8], [48, 16], [64, 16],
+    ];
+    for (const [n, expected] of cases) {
+      expect(numPoulesForPlayers(n)).toBe(expected);
+      const P = numPoulesForPlayers(n);
+      expect([1, 2, 4, 8, 16, 32]).toContain(P); // bracket propre
+      expect(Math.ceil(n / P)).toBeLessThanOrEqual(6); // poules pas trop grosses
+    }
+  });
+});
+
 describe('assignPoules — répartition serpent', () => {
   const players = Array.from({ length: 8 }, (_, i) => player(`p${i + 1}`, 1800 - i * 100));
-  const out = assignPoules(players, 4);
+  const out = assignPoules(players, 2);
   const byId = Object.fromEntries(out.map((o) => [o.player_id, o]));
 
-  it('crée le bon nombre de poules (8 / 4 → A et B)', () => {
+  it('crée le bon nombre de poules (2 poules → A et B)', () => {
     expect([...new Set(out.map((o) => o.poule))].sort()).toEqual(['A', 'B']);
   });
   it('seed par ELO décroissant (meilleur = seed 1)', () => {

@@ -1,32 +1,59 @@
 /**
- * Création d'un tournoi (Figma « Créer mon tournoi ») : nombre de joueurs, format,
- * joueurs par poule, matchs de classement. À la création on obtient un code d'invitation
- * et on est redirigé vers le détail du tournoi.
+ * Création d'un tournoi (Figma « Créer mon tournoi ») : nombre de joueurs (slider 4→64),
+ * format, matchs de classement. À la création on obtient un code d'invitation et on est
+ * redirigé vers le détail du tournoi.
+ *
+ * Le nombre de poules n'est PAS demandé : il est calculé automatiquement au lancement
+ * selon les inscrits réels (numPoulesForPlayers) — poules de 3 à 5 et bracket propre.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { ActivityIndicator, PanResponder, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { numPoulesForPlayers } from '@/lib/tournaments/bracket';
 import { createTournament, TOURNAMENT_FORMATS, type TournamentFormat } from '@/lib/tournaments/tournaments';
+import { notify } from '@/lib/ui/alert';
 
-const SIZES = [4, 8, 16, 32];
-const FORMATS: TournamentFormat[] = ['bo3', 'bo5', 'bo7', 'wtt', 'champions'];
-const PER_POULE = [3, 4, 5];
+// On ne garde que les formats réellement distincts (BO3/5/7) — WTT/Champions en étaient des doublons.
+const FORMATS: TournamentFormat[] = ['bo3', 'bo5', 'bo7'];
+const PLAYER_MIN = 4;
+const PLAYER_MAX = 64;
+const PLAYER_STEP = 1;
+
+const clampSize = (n: number) => Math.min(PLAYER_MAX, Math.max(PLAYER_MIN, n));
+
+/** Aperçu de la structure : « 4 poules de 4 → quarts ». */
+function poulesPreview(n: number): string {
+  const p = numPoulesForPlayers(n);
+  const per = Math.round(n / p);
+  const poulesLbl = p === 1 ? '1 poule' : `${p} poules`;
+  const round0 = p; // matchs du 1er tour du bracket (2 qualifiés/poule)
+  const phase =
+    round0 <= 1 ? 'finale directe' : round0 === 2 ? 'demies' : round0 === 4 ? 'quarts' : round0 === 8 ? '8es' : `tableau à ${round0}`;
+  return `${poulesLbl} de ~${per} → ${phase}`;
+}
 
 export default function NewTournamentScreen() {
   const { session } = useAuth();
   const [name, setName] = useState('');
   const [size, setSize] = useState(8);
   const [format, setFormat] = useState<TournamentFormat>('bo5');
-  const [perPoule, setPerPoule] = useState(4);
   const [ranked, setRanked] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [editingSize, setEditingSize] = useState(false);
+  const [sizeDraft, setSizeDraft] = useState('');
+
+  function commitSize() {
+    const n = Number.parseInt(sizeDraft, 10);
+    if (Number.isFinite(n)) setSize(clampSize(n));
+    setEditingSize(false);
+  }
 
   async function create() {
     const me = session?.user?.id;
@@ -37,12 +64,11 @@ export default function NewTournamentScreen() {
         name: name.trim() || 'Mon tournoi',
         format,
         maxPlayers: size,
-        playersPerPoule: perPoule,
         isRanked: ranked,
       });
       router.replace({ pathname: '/tournoi', params: { id: t.id } });
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
       setBusy(false);
     }
@@ -71,17 +97,55 @@ export default function NewTournamentScreen() {
             onChangeText={setName}
           />
 
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            NOMBRE DE JOUEURS
-          </ThemedText>
-          <View style={styles.chipRow}>
-            {SIZES.map((s) => (
-              <Pressable key={s} onPress={() => setSize(s)} style={[styles.chip, size === s ? styles.chipOn : styles.chipOff]}>
-                <ThemedText type="smallBold" themeColor={size === s ? 'onBrand' : 'text'}>
-                  {s}
-                </ThemedText>
+          <View style={styles.sliderHead}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              NOMBRE DE JOUEURS
+            </ThemedText>
+            <View style={styles.stepperRow}>
+              <Pressable style={styles.stepBtn} hitSlop={8} onPress={() => setSize((s) => clampSize(s - 1))}>
+                <Ionicons name="remove" size={18} color={Palette.evergreen} />
               </Pressable>
-            ))}
+              {editingSize ? (
+                <TextInput
+                  style={styles.sizeInput}
+                  value={sizeDraft}
+                  onChangeText={(t) => setSizeDraft(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  keyboardType="number-pad"
+                  autoFocus
+                  selectTextOnFocus
+                  maxLength={2}
+                  onBlur={commitSize}
+                  onSubmitEditing={commitSize}
+                  returnKeyType="done"
+                />
+              ) : (
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => {
+                    setSizeDraft(String(size));
+                    setEditingSize(true);
+                  }}>
+                  <ThemedText type="title" themeColor="brand">
+                    {size}
+                  </ThemedText>
+                </Pressable>
+              )}
+              <Pressable style={styles.stepBtn} hitSlop={8} onPress={() => setSize((s) => clampSize(s + 1))}>
+                <Ionicons name="add" size={18} color={Palette.evergreen} />
+              </Pressable>
+            </View>
+          </View>
+          <PlayerSlider value={size} onChange={setSize} />
+          <View style={styles.sliderScale}>
+            <ThemedText type="small" themeColor="textSecondary">
+              {PLAYER_MIN}
+            </ThemedText>
+            <ThemedText type="small" themeColor="brand">
+              {poulesPreview(size)}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {PLAYER_MAX}
+            </ThemedText>
           </View>
 
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
@@ -92,19 +156,6 @@ export default function NewTournamentScreen() {
               <Pressable key={f} onPress={() => setFormat(f)} style={[styles.chipWide, format === f ? styles.chipOn : styles.chipOff]}>
                 <ThemedText type="smallBold" themeColor={format === f ? 'onBrand' : 'text'}>
                   {TOURNAMENT_FORMATS[f].label}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            JOUEURS PAR POULE
-          </ThemedText>
-          <View style={styles.chipRow}>
-            {PER_POULE.map((n) => (
-              <Pressable key={n} onPress={() => setPerPoule(n)} style={[styles.chipFlex, perPoule === n ? styles.chipOn : styles.chipOff]}>
-                <ThemedText type="smallBold" themeColor={perPoule === n ? 'onBrand' : 'text'}>
-                  {n} joueurs
                 </ThemedText>
               </Pressable>
             ))}
@@ -137,6 +188,67 @@ export default function NewTournamentScreen() {
   );
 }
 
+/** Slider horizontal qui snap par paliers de PLAYER_STEP entre PLAYER_MIN et PLAYER_MAX. */
+function PlayerSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [width, setWidth] = useState(0);
+  const geom = useRef({ left: 0, width: 0 });
+  const trackRef = useRef<View>(null);
+
+  const snap = (raw: number) => {
+    const steps = Math.round((raw - PLAYER_MIN) / PLAYER_STEP);
+    return Math.min(PLAYER_MAX, Math.max(PLAYER_MIN, PLAYER_MIN + steps * PLAYER_STEP));
+  };
+
+  const setFromPageX = (pageX: number) => {
+    const { left, width: w } = geom.current;
+    if (w <= 0) return;
+    const ratio = Math.min(1, Math.max(0, (pageX - left) / w));
+    onChange(snap(PLAYER_MIN + ratio * (PLAYER_MAX - PLAYER_MIN)));
+  };
+
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      // Empêche le ScrollView parent de « voler » le geste en plein drag (sinon le pouce se bloque).
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
+      onPanResponderGrant: (e) => {
+        const pageX = e.nativeEvent.pageX;
+        trackRef.current?.measureInWindow((x, _y, w) => {
+          geom.current = { left: x, width: w };
+          setFromPageX(pageX);
+        });
+      },
+      onPanResponderMove: (_e, g) => setFromPageX(g.moveX),
+    }),
+  ).current;
+
+  const ratio = (value - PLAYER_MIN) / (PLAYER_MAX - PLAYER_MIN);
+  const THUMB = 26;
+  const x = ratio * width;
+
+  return (
+    <View
+      ref={trackRef}
+      style={styles.sliderHit}
+      onLayout={() => {
+        trackRef.current?.measureInWindow((lx, _ly, w) => {
+          geom.current = { left: lx, width: w };
+          setWidth(w);
+        });
+      }}
+      {...responder.panHandlers}>
+      <View style={styles.sliderTrack}>
+        <View style={[styles.sliderFill, { width: x }]} />
+      </View>
+      <View style={[styles.sliderThumb, { left: x - THUMB / 2 }]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
@@ -160,11 +272,49 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
-  chipRow: { flexDirection: 'row', gap: Spacing.two },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
-  chip: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.xs, alignItems: 'center' },
-  chipFlex: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.xs, alignItems: 'center' },
   chipWide: { paddingVertical: Spacing.three, paddingHorizontal: Spacing.four, borderRadius: Radius.xs, alignItems: 'center' },
+
+  // Slider nombre de joueurs (calqué sur la durée d'entraînement)
+  sliderHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.four, marginBottom: Spacing.two },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  stepBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    backgroundColor: Palette.white,
+  },
+  sizeInput: {
+    minWidth: 44,
+    textAlign: 'center',
+    fontFamily: 'OpenSauceTwo-Black',
+    fontSize: 22,
+    color: Palette.evergreen,
+    paddingVertical: 0,
+    paddingHorizontal: Spacing.one,
+  },
+  sliderScale: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.one },
+  sliderHit: { height: 40, justifyContent: 'center' },
+  sliderTrack: { height: 6, borderRadius: 3, backgroundColor: Palette.border, overflow: 'hidden' },
+  sliderFill: { height: 6, borderRadius: 3, backgroundColor: Palette.evergreen },
+  sliderThumb: {
+    position: 'absolute',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Palette.whitePP,
+    borderWidth: 3,
+    borderColor: Palette.evergreen,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
   chipOn: { backgroundColor: Palette.evergreen },
   chipOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   rankedRow: {

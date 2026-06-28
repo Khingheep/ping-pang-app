@@ -8,17 +8,34 @@ import type { PouleStanding, TournamentMatch, TournamentPlayer } from './tournam
 
 export type BracketPair = { playerA: string | null; playerB: string | null };
 
-/** Répartition « serpent » par seed (ELO décroissant) pour équilibrer les poules. */
+/**
+ * Nombre de poules à créer pour N joueurs : la plus grande puissance de 2 telle que
+ * chaque poule garde ≥ 3 joueurs en moyenne. Conséquences :
+ *  - taille de poule ∈ [3, 5] (parfois 6) → round-robin ni trop court ni trop long ;
+ *  - nombre de poules = puissance de 2 → le tableau final est toujours « propre »
+ *    (8→2 poules, 16→4, 24→8, 32→8, 48→16, 64→16…), sans bye bancal.
+ */
+export function numPoulesForPlayers(n: number): number {
+  for (const P of [32, 16, 8, 4, 2]) {
+    if (n >= P * 3) return P;
+  }
+  return 1;
+}
+
+/**
+ * Répartition « serpent » par seed (ELO décroissant) dans `numPoules` poules, pour
+ * équilibrer les niveaux. Les poules diffèrent d'au plus 1 joueur.
+ */
 export function assignPoules(
   players: TournamentPlayer[],
-  perPoule: number,
+  numPoules: number,
 ): { player_id: string; poule: string; seed: number }[] {
   const sorted = [...players].sort((a, b) => b.elo - a.elo);
-  const numPoules = Math.max(1, Math.ceil(sorted.length / perPoule));
+  const P = Math.max(1, numPoules);
   return sorted.map((p, i) => {
-    const row = Math.floor(i / numPoules);
-    const col = i % numPoules;
-    const pouleIdx = row % 2 === 0 ? col : numPoules - 1 - col; // serpent
+    const row = Math.floor(i / P);
+    const col = i % P;
+    const pouleIdx = row % 2 === 0 ? col : P - 1 - col; // serpent
     return { player_id: p.player_id, poule: String.fromCharCode(65 + pouleIdx), seed: i + 1 };
   });
 }

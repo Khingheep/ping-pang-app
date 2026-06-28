@@ -7,7 +7,7 @@
  */
 
 import { supabase } from '@/lib/supabase/client';
-import { assignPoules, pairWinners, seedBracketRound0 } from './bracket';
+import { assignPoules, numPoulesForPlayers, pairWinners, seedBracketRound0 } from './bracket';
 
 export { computePouleStandings } from './bracket';
 
@@ -139,10 +139,12 @@ export async function createTournament(
     name: string;
     format: TournamentFormat;
     maxPlayers: number;
-    playersPerPoule: number;
+    playersPerPoule?: number; // optionnel : le nombre de poules est recalculé au lancement selon les inscrits réels
     isRanked: boolean;
   },
 ): Promise<Tournament> {
+  // Valeur stockée à titre indicatif (capacité max) ; l'assignation réelle se fait au lancement.
+  const perPoule = p.playersPerPoule ?? Math.ceil(p.maxPlayers / numPoulesForPlayers(p.maxPlayers));
   // Réessaie sur collision de code (improbable mais possible).
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = genCode();
@@ -154,7 +156,7 @@ export async function createTournament(
         owner_id: ownerId,
         format: p.format,
         max_players: p.maxPlayers,
-        players_per_poule: p.playersPerPoule,
+        players_per_poule: perPoule,
         is_ranked: p.isRanked,
         status: 'open',
       })
@@ -210,7 +212,8 @@ export async function startTournament(detail: TournamentDetail): Promise<void> {
   const { tournament, players } = detail;
   if (players.length < 2) throw new Error('Il faut au moins 2 joueurs.');
 
-  const assignments = assignPoules(players, tournament.players_per_poule);
+  // Nombre de poules recalculé selon les inscrits RÉELS (pas la capacité max) → toujours équilibré.
+  const assignments = assignPoules(players, numPoulesForPlayers(players.length));
 
   // 1. Met à jour poule + seed de chaque joueur.
   for (const a of assignments) {
