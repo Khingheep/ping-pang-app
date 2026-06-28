@@ -54,3 +54,41 @@ export async function fetchFriendIds(myId: string): Promise<string[]> {
     r.requester === myId ? r.addressee : r.requester,
   );
 }
+
+/** Joueur sélectionnable comme partenaire (profil minimal). */
+export type PartnerCandidate = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  isFriend: boolean;
+};
+
+/**
+ * Candidats partenaires : tous les joueurs Ping Pang Paris (hors soi-même),
+ * avec mes amis remontés en tête de liste.
+ */
+export async function fetchPartnerCandidates(myId: string, limit = 200): Promise<PartnerCandidate[]> {
+  const [friendIds, players] = await Promise.all([
+    fetchFriendIds(myId),
+    supabase
+      .from('players')
+      .select('id, display_name, avatar_url')
+      .neq('id', myId)
+      .order('display_name', { ascending: true })
+      .limit(limit),
+  ]);
+  const friendSet = new Set(friendIds);
+  const rows = (players.data as { id: string; display_name: string | null; avatar_url: string | null }[] | null) ?? [];
+  return rows
+    .map((r) => ({
+      id: r.id,
+      name: r.display_name ?? 'Joueur',
+      avatarUrl: r.avatar_url,
+      isFriend: friendSet.has(r.id),
+    }))
+    .sort((a, b) => {
+      // Amis d'abord, puis tri alphabétique.
+      if (a.isFriend !== b.isFriend) return a.isFriend ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+}
