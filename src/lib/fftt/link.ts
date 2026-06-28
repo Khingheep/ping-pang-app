@@ -10,6 +10,9 @@ export type FfttPlayer = {
   pointsMensuels: number | null;
   classementOfficiel: string | null;
   club: { nom: string } | null;
+  pointsTempsReel?: number | null;
+  pointsDebutSaison?: number | null;
+  pointsMensuelsPrecedents?: number | null;
 };
 
 /** Détail d'un joueur FFTT (action=player). */
@@ -20,6 +23,9 @@ export type FfttDetail = {
   classementMensuel: string | null;
   pointsMensuels: number | null;
   pointsOfficiels: number | null;
+  pointsTempsReel?: number | null;
+  pointsDebutSaison?: number | null;
+  pointsMensuelsPrecedents?: number | null;
 };
 
 type FfttResponse = { player?: FfttDetail; players?: FfttPlayer[]; error?: string };
@@ -32,6 +38,7 @@ async function invokeFftt(body: Record<string, unknown>): Promise<FfttResponse> 
       const ctx = (error as { context?: { json?: () => Promise<{ error?: string }> } }).context;
       const j = ctx?.json ? await ctx.json() : null;
       if (j?.error === 'session_expired') msg = 'Session FFTT à rafraîchir, réessaie dans quelques minutes.';
+      else if (j?.error === 'rate_limited') msg = 'Trop de requêtes, réessaie dans quelques secondes.';
       else if (j?.error) msg = j.error;
     } catch {
       // garde le message générique
@@ -107,16 +114,78 @@ export async function fetchFfttByLicence(licence: string): Promise<FfttDetail | 
   return d.player ?? null;
 }
 
-/** Lie le compte FFTT au profil : enregistre fftt_id + fftt_points. */
-export async function linkFfttToProfile(
-  userId: string,
-  p: { numberId: string; pointsOfficiels: number | null; pointsMensuels: number | null },
-): Promise<number | null> {
-  const points = p.pointsOfficiels ?? p.pointsMensuels ?? null;
+/**
+ * Meilleure estimation de la force FFTT pour seeder le rating Glicko :
+ * temps réel (intègre les matchs non encore officialisés) > officiel > mensuel.
+ */
+export function ffttSeedPoints(p: {
+  pointsTempsReel?: number | null;
+  pointsOfficiels: number | null;
+  pointsMensuels: number | null;
+}): number | null {
+  return p.pointsTempsReel ?? p.pointsOfficiels ?? p.pointsMensuels ?? null;
+}
+
+/**
+ * Résout les points de force d'un joueur. Les lignes de recherche PAR NOM
+ * (HTML PingPocket) ne contiennent pas de points → on va chercher le détail
+ * (API JSON par licence) pour récupérer pointsTempsReel/Officiels/Mensuels.
+ */
+export async function resolveFfttPoints(p: FfttPlayer): Promise<number | null> {
+  const fromRow = ffttSeedPoints(p);
+  // La colonne `fftt_points` est un entier, mais les points TEMPS RÉEL FFTT sont
+  // fractionnaires (ex. 2246.5) → on arrondit avant persistance pour éviter
+  // « invalid input syntax for type integer ». L'ELO dérivé est déjà arrondi.
+  if (fromRow != null) return Math.round(fromRow);
+  const d = await fetchFfttByLicence(p.numberId);
+  const pts = d ? ffttSeedPoints(d) : null;
+  return pts != null ? Math.round(pts) : null;
+}
+
+/** Point d'historique de classement officiel (action=history). */
+export type FfttRankingPoint = { date: string; points: number; nationalRanking: number | null };
+
+/** Adversaire commun entre 2 joueurs + résultats de chacun (action=common). */
+export type FfttHeadToHead = {
+  opponent: { numberId: string; nom: string };
+  a: { date: string; victoire: boolean; journee: number | null }[];
+  b: { date: string; victoire: boolean; journee: number | null }[];
+};
+
+/** Historique de classement officiel d'un joueur (tendance long terme, depuis ~2012). */
+export async function fetchFfttHistory(licence: string): Promise<FfttRankingPoint[]> {
+  const { data, error } = await supabase.functions.invoke('fftt', {
+    body: { action: 'history', numberId: licence },
+  });
+  if (error) return [];
+  return (data as { history?: FfttRankingPoint[] })?.history ?? [];
+}
+
+/** Adversaires communs entre deux licenciés (head-to-head). */
+export async function fetchFfttCommonOpponents(a: string, b: string): Promise<FfttHeadToHead[]> {
+  const { data, error } = await supabase.functions.invoke('fftt', {
+    body: { action: 'common', numberId: a, opponentId: b },
+  });
+  if (error) return [];
+  return (data as { common?: FfttHeadToHead[] })?.common ?? [];
+}
+
+/** Lie le compte FFTT au profil : enregistre fftt_id + fftt_points (force temps réel). */
+export async function linkFfttToProfile(userId: string, p: FfttPlayer): Promise<number | null> {
+  const points = await resolveFfttPoints(p);
   const { error } = await supabase
     .from('players')
     .update({ fftt_id: p.numberId, fftt_points: points })
     .eq('id', userId);
   if (error) throw error;
   return points;
+}
+
+/** Délie le compte FFTT : efface fftt_id + fftt_points (l'ELO/Glicko déjà acquis est conservé). */
+export async function unlinkFfttFromProfile(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('players')
+    .update({ fftt_id: null, fftt_points: null })
+    .eq('id', userId);
+  if (error) throw error;
 }

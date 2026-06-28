@@ -56,6 +56,10 @@ export interface FfttPlayer {
   nationalite: string | null;
   sexe: 'H' | 'F';
   club: { numberId: string | null; nom: string } | null;
+  // Champs additionnels (backend PingPocket). Optionnels : le scraper www2 ne les fournit pas.
+  pointsTempsReel?: number | null; // force la plus à jour (intègre les matchs non encore officialisés)
+  pointsDebutSaison?: number | null; // points officiels de début de phase
+  pointsMensuelsPrecedents?: number | null; // points mensuels du mois précédent
 }
 
 export interface FfttMatch {
@@ -65,6 +69,9 @@ export interface FfttMatch {
   journee: number | null;
   coefficient: number | null;
   gainPerte: number | null;
+  // Backend PingPocket : compétition + fiabilité du calcul de points.
+  competition?: { nom: string; sigle: string | null } | null;
+  pointAccuracy?: string | null; // ex. "OFFICIAL"
 }
 
 export interface FfttPlayerDetail {
@@ -78,6 +85,10 @@ export interface FfttPlayerDetail {
   evolutionMois: number | null;
   evolutionAnnee: number | null;
   matchs: FfttMatch[];
+  // Champs additionnels (backend PingPocket).
+  pointsTempsReel?: number | null;
+  pointsDebutSaison?: number | null;
+  pointsMensuelsPrecedents?: number | null;
 }
 
 // ───────────────────────── Helpers ─────────────────────────

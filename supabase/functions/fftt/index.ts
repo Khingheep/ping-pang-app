@@ -6,23 +6,27 @@
  *                  &type=cl|off &limit=  → { players: FfttPlayer[] }
  *   action=player  &numberId=            → { player: FfttPlayerDetail }
  *
- * La session FFTT (PHPSESSID validé par CAPTCHA) est lue dans la table
- * `fftt_session`, alimentée par le script Node `refresh-session`. Si elle est
- * morte (CAPTCHA réapparu), on renvoie 503 `session_expired`.
+ * Backend FFTT : API publique PingPocket (`pingpocket.ts`) — stateless, sans
+ * CAPTCHA ni PHPSESSID. Solution temporaire en attendant l'accès officiel
+ * SMARTPING. L'ancien scraper www2.fftt.com reste disponible dans `fftt.ts`
+ * (réimporter depuis là pour repasser dessus). La table `fftt_session` et le
+ * script `refresh-session` sont donc dormants tant que PingPocket est utilisé.
  *
- * Les réponses sont mises en cache dans `fftt_cache` (TTL ci-dessous) pour ne
- * pas marteler FFTT.
+ * PingPocket throttle les requêtes (429) → on renvoie 503 `rate_limited` et on
+ * s'appuie sur le cache `fftt_cache` (TTL ci-dessous) pour ne pas le marteler.
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { FfttMatch, SearchParams, Sexe } from './fftt.ts';
+// Backend FFTT temporaire : API publique PingPocket (stateless, sans CAPTCHA).
+// Pour repasser au scraper www2.fftt.com, réimporter depuis './fftt.ts'.
 import {
   searchFftt,
   getDetailFftt,
-  SessionExpiredError,
-  type FfttMatch,
-  type SearchParams,
-  type Sexe,
-} from './fftt.ts';
+  getHistoryFftt,
+  getCommonOpponentsFftt,
+  RateLimitedError,
+} from './pingpocket.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -31,7 +35,7 @@ const CORS = {
 };
 
 /** TTL du cache par type de requête (secondes). */
-const TTL = { search: 3600, player: 21600 } as const;
+const TTL = { search: 3600, player: 21600, history: 86400, common: 21600 } as const;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -57,15 +61,6 @@ async function readParams(req: Request, url: URL): Promise<Record<string, string
     }
   }
   return params;
-}
-
-async function getPhpsessid(supabase: SupabaseClient): Promise<string | null> {
-  const { data } = await supabase
-    .from('fftt_session')
-    .select('phpsessid')
-    .eq('id', 1)
-    .maybeSingle();
-  return data?.phpsessid ?? null;
 }
 
 async function readCache(supabase: SupabaseClient, key: string, ttl: number): Promise<unknown | null> {
@@ -122,6 +117,9 @@ async function upsertMatches(
       journee: m.journee,
       coefficient: m.coefficient,
       gain_perte: m.gainPerte,
+      competition_nom: m.competition?.nom ?? null,
+      competition_sigle: m.competition?.sigle ?? null,
+      point_accuracy: m.pointAccuracy ?? null,
       synced_at: now,
     })),
     { onConflict: 'match_uid' },
@@ -140,11 +138,6 @@ Deno.serve(async (req: Request) => {
   try {
     const p = await readParams(req, url);
     const action = p.action ?? 'search';
-
-    const phpsessid = await getPhpsessid(supabase);
-    if (!phpsessid) {
-      return json({ error: 'session_expired', hint: 'lancer `npm run fftt -- refresh-session`' }, 503);
-    }
 
     if (action === 'search') {
       const params: SearchParams = {
@@ -165,27 +158,34 @@ Deno.serve(async (req: Request) => {
       const cached = await readCache(supabase, key, TTL.search);
       if (cached) return json({ players: cached, cached: true });
 
-      const players = await searchFftt(phpsessid, params);
+      const players = await searchFftt(null, params);
       await writeCache(supabase, key, players);
 
-      // Alimente le miroir local `fftt_players` (typeahead) — best-effort.
+      // Alimente le miroir local `fftt_players` (typeahead) — best-effort :
+      // une écriture miroir qui échoue ne doit jamais casser la recherche.
       if (players.length) {
-        await supabase.from('fftt_players').upsert(
-          players.map((pl) => ({
-            number_id: pl.numberId,
-            nom: pl.nom,
-            prenom: pl.prenom,
-            club_nom: pl.club?.nom ?? null,
-            sexe: pl.sexe,
-            classement: pl.classementOfficiel,
-            points_off: pl.pointsOfficiels,
-            points_men: pl.pointsMensuels,
-            rang_national: pl.rangNational,
-            categorie: pl.categorie,
-            synced_at: new Date().toISOString(),
-          })),
-          { onConflict: 'number_id' },
-        );
+        try {
+          await supabase.from('fftt_players').upsert(
+            players.map((pl) => ({
+              number_id: pl.numberId,
+              nom: pl.nom,
+              prenom: pl.prenom,
+              club_nom: pl.club?.nom ?? null,
+              sexe: pl.sexe,
+              classement: pl.classementOfficiel,
+              points_off: pl.pointsOfficiels,
+              points_men: pl.pointsMensuels,
+              points_rt: pl.pointsTempsReel ?? null,
+              points_debut: pl.pointsDebutSaison ?? null,
+              rang_national: pl.rangNational,
+              categorie: pl.categorie,
+              synced_at: new Date().toISOString(),
+            })),
+            { onConflict: 'number_id' },
+          );
+        } catch (e) {
+          console.error('[fftt] upsert fftt_players échoué (ignoré):', e);
+        }
       }
 
       return json({ players });
@@ -199,17 +199,48 @@ Deno.serve(async (req: Request) => {
       const cached = await readCache(supabase, key, TTL.player);
       if (cached) return json({ player: cached, cached: true });
 
-      const player = await getDetailFftt(phpsessid, numberId);
+      const player = await getDetailFftt(null, numberId);
       await writeCache(supabase, key, player);
       // Persiste l'historique des matchs dans la table dédiée — best-effort.
-      await upsertMatches(supabase, numberId, player.matchs);
+      try {
+        await upsertMatches(supabase, numberId, player.matchs);
+      } catch (e) {
+        console.error('[fftt] upsert fftt_matches échoué (ignoré):', e);
+      }
       return json({ player });
+    }
+
+    if (action === 'history') {
+      const numberId = p.numberId ?? p.licence;
+      if (!numberId) return json({ error: 'numberId requis' }, 400);
+
+      const key = `history:${numberId}`;
+      const cached = await readCache(supabase, key, TTL.history);
+      if (cached) return json({ history: cached, cached: true });
+
+      const history = await getHistoryFftt(null, numberId);
+      await writeCache(supabase, key, history);
+      return json({ history });
+    }
+
+    if (action === 'common') {
+      const a = p.numberId ?? p.licence;
+      const b = p.opponentId ?? p.opponent;
+      if (!a || !b) return json({ error: 'numberId et opponentId requis' }, 400);
+
+      const key = `common:${[a, b].sort().join('-')}`;
+      const cached = await readCache(supabase, key, TTL.common);
+      if (cached) return json({ common: cached, cached: true });
+
+      const common = await getCommonOpponentsFftt(null, a, b);
+      await writeCache(supabase, key, common);
+      return json({ common });
     }
 
     return json({ error: `action inconnue: ${action}` }, 400);
   } catch (err) {
-    if (err instanceof SessionExpiredError) {
-      return json({ error: 'session_expired', hint: 'lancer `npm run fftt -- refresh-session`' }, 503);
+    if (err instanceof RateLimitedError) {
+      return json({ error: 'rate_limited', hint: 'PingPocket throttle (429), réessaie dans un instant.' }, 503);
     }
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
