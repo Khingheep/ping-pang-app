@@ -7,6 +7,7 @@ export type PlayerProfile = {
   handle: string;
   display_name: string;
   avatar_url: string | null;
+  bio: string | null;
   city: string | null;
   country: string | null;
   play_style: string | null;
@@ -16,6 +17,9 @@ export type PlayerProfile = {
   fftt_points: number | null;
   elo: number;
   glicko_rd: number | null; // incertitude Glicko-2 (RD élevé = classement provisoire)
+  goal_elo: number | null; // objectif d'ELO fixé manuellement (null = aucun)
+  goal_start_elo: number | null; // ELO au moment où l'objectif a été posé (base de la progression)
+  goal_deadline: string | null; // 1er du mois cible (ISO date) ou null
   level: string;
   is_premium: boolean;
   onboarded: boolean;
@@ -40,9 +44,11 @@ export type LeaderboardEntry = {
   country: string | null;
   elo: number;
   level: string;
+  lat: number | null;
+  lng: number | null;
 };
 
-const LIST_COLS = 'id, handle, display_name, city, country, elo, level';
+const LIST_COLS = 'id, handle, display_name, city, country, elo, level, lat, lng';
 
 function handleFromUser(user: User): string {
   const base = (user.email?.split('@')[0] ?? 'joueur').toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -51,11 +57,17 @@ function handleFromUser(user: User): string {
 
 /** Garantit qu'une ligne `players` existe pour ce user (créée à la 1re connexion). */
 export async function ensurePlayerProfile(user: User): Promise<void> {
-  const handle = handleFromUser(user);
-  const display_name = (user.user_metadata?.display_name as string | undefined) ?? handle;
-  await supabase
+  const base = handleFromUser(user);
+  const display_name = (user.user_metadata?.display_name as string | undefined) ?? base;
+  const { error } = await supabase
     .from('players')
-    .upsert({ id: user.id, handle, display_name }, { onConflict: 'id', ignoreDuplicates: true });
+    .upsert({ id: user.id, handle: base, display_name }, { onConflict: 'id', ignoreDuplicates: true });
+  // `handle` déjà pris par une autre licence → suffixe dérivé de l'id pour garantir l'unicité.
+  if (error?.code === '23505') {
+    await supabase
+      .from('players')
+      .upsert({ id: user.id, handle: `${base}-${user.id.slice(0, 4)}`, display_name }, { onConflict: 'id', ignoreDuplicates: true });
+  }
 }
 
 /** Profil joueur courant (ou null). */
@@ -63,7 +75,7 @@ export async function fetchMyProfile(userId: string): Promise<PlayerProfile | nu
   const { data } = await supabase
     .from('players')
     .select(
-      'id, handle, display_name, avatar_url, city, country, play_style, handedness, player_type, fftt_id, fftt_points, elo, glicko_rd, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
+      'id, handle, display_name, avatar_url, bio, city, country, play_style, handedness, player_type, fftt_id, fftt_points, elo, glicko_rd, goal_elo, goal_start_elo, goal_deadline, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
     )
     .eq('id', userId)
     .maybeSingle();
@@ -90,14 +102,27 @@ export async function upsertOnboarding(
     level?: string;
   },
 ): Promise<void> {
-  const handle = (email.split('@')[0] ?? 'joueur').toLowerCase().replace(/[^a-z0-9_]/g, '') || 'joueur';
-  const row: Record<string, unknown> = { id: userId, handle, onboarded: true, ...patch };
+  const base = (email.split('@')[0] ?? 'joueur').toLowerCase().replace(/[^a-z0-9_]/g, '') || 'joueur';
+  const extras: Record<string, unknown> = {};
   if (patch.elo !== undefined) {
-    row.glicko_rating = patch.elo;
-    if (patch.fftt_points != null) row.glicko_rd = 100;
+    extras.glicko_rating = patch.elo;
+    if (patch.fftt_points != null) extras.glicko_rd = 100;
   }
-  const { error } = await supabase.from('players').upsert(row, { onConflict: 'id' });
+  const buildRow = (handle: string): Record<string, unknown> => ({ id: userId, handle, onboarded: true, ...patch, ...extras });
+
+  let { error } = await supabase.from('players').upsert(buildRow(base), { onConflict: 'id' });
+  // `handle` est UNIQUE : si une autre licence l'a déjà pris (collision sur le préfixe d'email),
+  // on retente avec un suffixe dérivé de l'id pour garantir l'unicité.
+  if (error?.code === '23505') {
+    const alt = `${base}-${userId.slice(0, 4)}`;
+    ({ error } = await supabase.from('players').upsert(buildRow(alt), { onConflict: 'id' }));
+  }
   if (error) throw error;
+}
+
+/** Mémorise la dernière position connue du joueur (pour « Joueurs près de toi »). */
+export async function updateMyLocation(userId: string, coords: { lat: number; lng: number }): Promise<void> {
+  await supabase.from('players').update({ lat: coords.lat, lng: coords.lng }).eq('id', userId);
 }
 
 /** Met à jour les préférences (confidentialité / notifications). */
@@ -112,6 +137,7 @@ export async function updateMyProfile(
   patch: {
     display_name?: string;
     avatar_url?: string;
+    bio?: string;
     city?: string;
     country?: string;
     play_style?: string;
@@ -136,6 +162,21 @@ export async function updateMyProfile(
   if (error) throw error;
 }
 
+/**
+ * Fixe (ou retire) l'objectif d'ELO manuel. À la création, on fige `goal_start_elo`
+ * sur l'ELO courant pour que la progression parte de là. `null` partout = on retire.
+ */
+export async function updateMyGoal(
+  userId: string,
+  goal: { goalElo: number; goalDeadline: string | null; currentElo: number } | null,
+): Promise<void> {
+  const patch = goal
+    ? { goal_elo: goal.goalElo, goal_start_elo: goal.currentElo, goal_deadline: goal.goalDeadline }
+    : { goal_elo: null, goal_start_elo: null, goal_deadline: null };
+  const { error } = await supabase.from('players').update(patch).eq('id', userId);
+  if (error) throw error;
+}
+
 /** Classement par ELO décroissant. */
 export async function fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
   const { data } = await supabase
@@ -155,4 +196,31 @@ export async function fetchOtherPlayers(excludeId: string, limit = 50): Promise<
     .order('elo', { ascending: false })
     .limit(limit);
   return (data as LeaderboardEntry[] | null) ?? [];
+}
+
+/** Résultat minimal d'une recherche de joueur (pour démarrer une conversation). */
+export type PlayerSearchResult = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+};
+
+/**
+ * Recherche de joueurs par nom ou handle (hors soi-même), pour démarrer un message.
+ * Insensible à la casse ; renvoie [] si la requête est vide.
+ */
+export async function searchPlayers(myId: string, query: string, limit = 20): Promise<PlayerSearchResult[]> {
+  const q = query.trim();
+  if (!q) return [];
+  // Échappe les jokers PostgREST (% et _) pour qu'ils soient traités littéralement.
+  const pattern = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+  const { data } = await supabase
+    .from('players')
+    .select('id, display_name, avatar_url')
+    .neq('id', myId)
+    .or(`display_name.ilike.${pattern},handle.ilike.${pattern}`)
+    .order('display_name', { ascending: true })
+    .limit(limit);
+  const rows = (data as { id: string; display_name: string | null; avatar_url: string | null }[] | null) ?? [];
+  return rows.map((r) => ({ id: r.id, name: r.display_name ?? 'Joueur', avatarUrl: r.avatar_url }));
 }

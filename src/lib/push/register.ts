@@ -16,8 +16,27 @@ Notifications.setNotificationHandler({
 });
 
 /**
+ * Demande SEULEMENT la permission notifications (priming onboarding), sans enregistrer de token.
+ * L'enregistrement du token Expo se fait plus tard via `registerForPush` (après création du compte).
+ * Retourne true si accordée. Marche sur iOS/Android et web (API Notification du navigateur).
+ */
+export async function requestNotificationPermission(): Promise<boolean> {
+  try {
+    const current = await Notifications.getPermissionsAsync();
+    let status = current.status;
+    if (status !== 'granted') {
+      status = (await Notifications.requestPermissionsAsync()).status;
+    }
+    return status === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Enregistre le device pour les push et sauvegarde le token Expo.
- * No-op silencieux sur Expo Go / simulateur (le push distant exige un dev build + projectId EAS).
+ * Ne demande PAS la permission (le priming se fait dans l'onboarding via `requestNotificationPermission`) :
+ * on enregistre seulement si elle est déjà accordée. No-op silencieux sinon, sur Expo Go / simulateur.
  * Retourne le token, ou null si indisponible.
  */
 export async function registerForPush(playerId: string): Promise<string | null> {
@@ -25,11 +44,7 @@ export async function registerForPush(playerId: string): Promise<string | null> 
     if (!Device.isDevice) return null;
 
     const current = await Notifications.getPermissionsAsync();
-    let status = current.status;
-    if (status !== 'granted') {
-      status = (await Notifications.requestPermissionsAsync()).status;
-    }
-    if (status !== 'granted') return null;
+    if (current.status !== 'granted') return null;
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {

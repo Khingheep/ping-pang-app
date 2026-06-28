@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { levelForElo } from '@/lib/elo';
+import { fetchFfttCommonOpponents, type FfttHeadToHead } from '@/lib/fftt/link';
 import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 import {
   acceptFriendRequest,
@@ -17,6 +18,7 @@ import {
   sendFriendRequest,
   type FriendStatus,
 } from '@/lib/social/friends';
+import { notify } from '@/lib/ui/alert';
 
 const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
   none: { icon: 'person-add-outline', label: 'Ajouter en ami' },
@@ -25,11 +27,19 @@ const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; l
   friends: { icon: 'people', label: 'Amis ✓' },
 };
 
+/** Bilan victoires/défaites compact d'une liste de matchs : "2V-1D". */
+function winLoss(games: { victoire: boolean }[]): string {
+  const v = games.filter((g) => g.victoire).length;
+  return `${v}V-${games.length - v}D`;
+}
+
 export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { session } = useAuth();
   const myId = session?.user?.id;
   const [p, setP] = useState<PlayerProfile | null>(null);
+  const [myFfttId, setMyFfttId] = useState<string | null>(null);
+  const [common, setCommon] = useState<FfttHeadToHead[]>([]);
   const [friend, setFriend] = useState<FriendStatus>('none');
   const [friendBusy, setFriendBusy] = useState(false);
 
@@ -38,8 +48,22 @@ export default function PlayerScreen() {
   }, [id]);
 
   useEffect(() => {
+    if (myId && id !== myId) fetchMyProfile(myId).then((me) => setMyFfttId(me?.fftt_id ?? null));
+  }, [myId, id]);
+
+  useEffect(() => {
     if (id && myId && id !== myId) getFriendStatus(myId, id).then(setFriend);
   }, [id, myId]);
+
+  // Adversaires communs FFTT : si les deux joueurs ont une licence liée.
+  useEffect(() => {
+    const theirFftt = p?.fftt_id;
+    if (myFfttId && theirFftt && myFfttId !== theirFftt) {
+      fetchFfttCommonOpponents(myFfttId, theirFftt).then(setCommon).catch(() => {});
+    } else {
+      setCommon([]);
+    }
+  }, [myFfttId, p?.fftt_id]);
 
   async function onFriend() {
     if (!myId || !p) return;
@@ -56,7 +80,7 @@ export default function PlayerScreen() {
         setFriend('none');
       }
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie.');
     } finally {
       setFriendBusy(false);
     }
@@ -186,6 +210,27 @@ export default function PlayerScreen() {
                   <ThemedText type="smallBold">Défier</ThemedText>
                 </Pressable>
               </View>
+
+              {common.length ? (
+                <View style={styles.h2hCard}>
+                  <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.h2hTitle}>
+                    Adversaires communs (FFTT) · {common.length}
+                  </ThemedText>
+                  {common.slice(0, 12).map((c) => (
+                    <View key={c.opponent.numberId} style={styles.h2hRow}>
+                      <ThemedText type="smallBold" style={styles.h2hName} numberOfLines={1}>
+                        {c.opponent.nom}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="brand">
+                        Toi {winLoss(c.a)}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted">
+                        {'  ·  '}Lui {winLoss(c.b)}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
             </>
           ) : null}
         </ScrollView>
@@ -250,6 +295,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  h2hCard: {
+    marginTop: Spacing.two,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.four,
+    gap: Spacing.two,
+  },
+  h2hTitle: { marginBottom: Spacing.one },
+  h2hRow: { flexDirection: 'row', alignItems: 'center' },
+  h2hName: { flex: 1 },
   actionRow: { flexDirection: 'row', gap: Spacing.two },
   actionBtn: {
     flex: 1,

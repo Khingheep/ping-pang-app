@@ -19,7 +19,7 @@ export default function WelcomeScreen() {
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-      <Image source={require('@/assets/images/welcome.png')} style={StyleSheet.absoluteFill} contentFit="cover" />
+      <Image source={require('@/assets/images/hero.png')} style={StyleSheet.absoluteFill} contentFit="cover" />
       <LinearGradient
         colors={['rgba(16,16,16,0.10)', 'rgba(9,44,37,0.55)', 'rgba(9,44,37,0.96)']}
         locations={[0, 0.5, 1]}

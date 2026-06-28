@@ -1,14 +1,13 @@
 /**
- * Onboarding « une question par écran » (inspiration Hinge), mode clair.
+ * Onboarding « une question par écran » (inspiration Hinge), DA blanc/vert.
+ * Fond blanc uni (thème clair) : texte onyx, accents verts, cartes blanches.
  *
- * Flux : Prénom+Nom → Type de pongiste → Centres d'intérêt → Email → Mot de passe
- *        → (auto, si trouvée) Licence FFTT → Bienvenue.
+ * Flux : Prénom+Nom → Type de pongiste → Centres d'intérêt → Email → Photo → Mot de passe
+ *        → (auto, si trouvée) Licence FFTT → Autorisations (loc + notifs) → Bienvenue.
  *
  * • Dès le nom saisi : recherche FFTT EN TÂCHE DE FOND (2 sexes) ; résultat proposé à
- *   l'avant-dernière étape, SAUTÉE si rien trouvé.
- * • Email et mot de passe sur DEUX écrans séparés (la page email ne demande pas le mdp).
- *   Le compte est créé à la fin (mailer_autoconfirm = session immédiate).
- * • Retour = flèche ← en header.
+ *   l'avant-dernière étape, SAUTÉE si rien trouvé (mais affichée en cas d'ERREUR service).
+ * • Compte créé à la fin (mailer_autoconfirm = session immédiate).
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -16,7 +15,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -24,12 +23,24 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { ffttPointsToElo, levelForElo } from '@/lib/elo';
-import { searchFftt, type FfttPlayer } from '@/lib/fftt/link';
+import {
+  searchFftt,
+  fetchFfttByLicence,
+  ffttSeedPoints,
+  resolveFfttPoints,
+  type FfttPlayer,
+} from '@/lib/fftt/link';
+import { useUserLocation } from '@/lib/location/use-location';
 import { uploadAvatar } from '@/lib/players/avatar';
 import { upsertOnboarding } from '@/lib/players/profile';
+import { requestNotificationPermission } from '@/lib/push/register';
+import { choose, notify } from '@/lib/ui/alert';
 
-const STEP = { NAME: 0, TYPE: 1, INTERESTS: 2, EMAIL: 3, PHOTO: 4, PASSWORD: 5, FFTT: 6, DONE: 7 } as const;
-const DOTS = 7; // NAME..FFTT
+// Cartes / champs sur fond blanc uni.
+const SURFACE = Palette.white;
+
+const STEP = { NAME: 0, TYPE: 1, INTERESTS: 2, EMAIL: 3, PHOTO: 4, PASSWORD: 5, FFTT: 6, PERMS: 7, DONE: 8 } as const;
+const DOTS = 8; // NAME..PERMS
 
 const PLAYER_TYPES = [
   { key: 'occasionnel', emoji: '🌴', title: 'Occasionnel', sub: 'Pour le plaisir, en vacances ou au bureau' },
@@ -49,10 +60,67 @@ const INTERESTS = [
 
 const EMAIL_RE = /.+@.+\..+/;
 
+type PermStatus = 'idle' | 'loading' | 'granted' | 'denied';
+
+/** Ligne d'autorisation (priming) : titre + raison + bouton « Activer » → état accordé. */
+function PermRow({
+  icon,
+  title,
+  sub,
+  status,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  sub: string;
+  status: PermStatus;
+  onPress: () => void;
+}) {
+  const granted = status === 'granted';
+  return (
+    <View style={styles.permRow}>
+      <View style={styles.permIcon}>
+        <Ionicons name={icon} size={22} color={Palette.evergreen} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <ThemedText type="cardTitle">{title}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {sub}
+        </ThemedText>
+      </View>
+      <Pressable
+        style={[styles.permBtn, granted && styles.permBtnOn]}
+        disabled={granted || status === 'loading'}
+        onPress={onPress}>
+        {status === 'loading' ? (
+          <ActivityIndicator color={Palette.evergreen} size="small" />
+        ) : granted ? (
+          <Ionicons name="checkmark" size={20} color={Palette.evergreen} />
+        ) : (
+          <ThemedText type="smallBold" themeColor="brand">
+            Activer
+          </ThemedText>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
 export default function OnboardingScreen() {
-  const { session, signUpWithEmail, markOnboarded } = useAuth();
+  const { session, signUpWithEmail, signOut, markOnboarded } = useAuth();
   const [step, setStep] = useState<number>(STEP.NAME);
   const [busy, setBusy] = useState(false);
+
+  // Permissions (priming) — on ne déclenche la pop-up système que sur tap, jamais au montage.
+  const location = useUserLocation(false);
+  const [notif, setNotif] = useState<PermStatus>('idle');
+
+  async function askNotif() {
+    if (notif === 'loading' || notif === 'granted') return;
+    setNotif('loading');
+    const ok = await requestNotificationPermission();
+    setNotif(ok ? 'granted' : 'denied');
+  }
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -86,6 +154,37 @@ export default function OnboardingScreen() {
       });
   }
 
+  /**
+   * Sélection d'une licence. La recherche par nom ne renvoie pas les points
+   * (HTML PingPocket) → on va chercher le détail pour récupérer la force temps
+   * réel et afficher l'ELO de départ tout de suite.
+   */
+  async function chooseFftt(p: FfttPlayer) {
+    if (fftt?.numberId === p.numberId) {
+      setFftt(null);
+      return;
+    }
+    setFftt(p);
+    if (ffttSeedPoints(p) != null) return;
+    try {
+      const d = await fetchFfttByLicence(p.numberId);
+      if (d) {
+        setFftt((cur) =>
+          cur?.numberId === p.numberId
+            ? {
+                ...cur,
+                pointsTempsReel: d.pointsTempsReel ?? null,
+                pointsOfficiels: d.pointsOfficiels,
+                pointsMensuels: d.pointsMensuels,
+              }
+            : cur,
+        );
+      }
+    } catch {
+      /* on garde la sélection sans points : le seed se résoudra au submit */
+    }
+  }
+
   function retryFfttSearch() {
     searchFired.current = false;
     setFfttDone(false);
@@ -96,15 +195,54 @@ export default function OnboardingScreen() {
     setInterests((cur) => (cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label]));
   }
 
-  async function pickPhoto() {
+  // Déconnexion depuis l'onboarding (session héritée d'un compte incomplet) → l'écran email
+  // repasse en saisie libre, on reste sur l'onboarding pour créer un nouveau compte.
+  async function switchAccount() {
+    try {
+      setBusy(true);
+      await signOut();
+      setStep(STEP.EMAIL);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pickFromLibrary() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Photo', 'Autorise l’accès aux photos pour ajouter un avatar.');
+      notify('Photo', 'Autorise l’accès aux photos pour ajouter un avatar.');
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.6 });
     if (res.canceled || !res.assets[0]) return;
-    setPhoto(res.assets[0].uri); // upload différé à la fin (après création du compte)
+    setPhoto(res.assets[0].uri);
+  }
+
+  async function takePhoto() {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      notify('Caméra', 'Autorise l’accès à la caméra pour prendre une photo.');
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.6 });
+    if (res.canceled || !res.assets[0]) return;
+    setPhoto(res.assets[0].uri);
+  }
+
+  function pickPhoto() {
+    // Sur le web, le file-picker natif propose déjà « prendre une photo / galerie » selon l'OS.
+    if (Platform.OS === 'web') {
+      void pickFromLibrary();
+      return;
+    }
+    choose({
+      title: 'Photo de profil',
+      message: 'Comment veux-tu ajouter ta photo ?',
+      options: [
+        { text: 'Prendre une photo', onPress: () => void takePhoto() },
+        { text: 'Choisir dans la galerie', onPress: () => void pickFromLibrary() },
+      ],
+    });
   }
 
   function handleNext() {
@@ -122,10 +260,10 @@ export default function OnboardingScreen() {
       case STEP.PHOTO:
         return setStep(STEP.PASSWORD);
       case STEP.PASSWORD:
-        // Saute l'étape FFTT seulement si la recherche a abouti SANS résultat
-        // (sur erreur/service indispo, on montre l'étape pour pouvoir réessayer).
-        return setStep(ffttDone && !ffttError && ffttResults.length === 0 ? STEP.DONE : STEP.FFTT);
+        return setStep(ffttDone && !ffttError && ffttResults.length === 0 ? STEP.PERMS : STEP.FFTT);
       case STEP.FFTT:
+        return setStep(STEP.PERMS);
+      case STEP.PERMS:
         return setStep(STEP.DONE);
       default:
         return finish();
@@ -133,8 +271,10 @@ export default function OnboardingScreen() {
   }
 
   function back() {
-    if (step === STEP.NAME) router.back();
-    else if (step <= STEP.PASSWORD) setStep(step - 1);
+    if (step === STEP.NAME) {
+      // Onboarding parfois ouvert sans écran derrière (gating needsOnboarding) → éviter GO_BACK non géré.
+      if (router.canGoBack()) router.back();
+    } else if (step <= STEP.PASSWORD) setStep(step - 1);
   }
 
   async function finish() {
@@ -145,17 +285,16 @@ export default function OnboardingScreen() {
       if (!uid) {
         uid = await signUpWithEmail(email.trim(), password);
         if (!uid) {
-          Alert.alert('Inscription', 'Impossible de créer le compte (email déjà utilisé ?).');
+          notify('Inscription', 'Impossible de créer le compte (email déjà utilisé ?).');
           return;
         }
       }
-      // Upload de la photo maintenant qu'on est authentifié (optionnelle).
       let avatar: string | undefined;
       if (photo) {
         try {
           avatar = await uploadAvatar(uid, photo);
         } catch {
-          /* la photo est optionnelle : on n'échoue pas l'inscription pour ça */
+          /* la photo est optionnelle */
         }
       }
       const patch: Parameters<typeof upsertOnboarding>[2] = {
@@ -168,7 +307,8 @@ export default function OnboardingScreen() {
       };
       if (fftt) {
         patch.fftt_id = fftt.numberId;
-        const pts = fftt.pointsOfficiels ?? fftt.pointsMensuels ?? null;
+        // Force temps réel (résout le détail si la ligne de recherche n'a pas de points).
+        const pts = await resolveFfttPoints(fftt);
         patch.fftt_points = pts;
         if (pts) {
           const e = ffttPointsToElo(pts);
@@ -180,7 +320,14 @@ export default function OnboardingScreen() {
       markOnboarded();
       router.replace('/');
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+      // Les erreurs Supabase ne sont pas des `Error` → on remonte quand même leur message.
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === 'object' && 'message' in e
+            ? String((e as { message?: unknown }).message)
+            : 'Réessaie.';
+      notify('Erreur', msg);
     } finally {
       setBusy(false);
     }
@@ -193,15 +340,15 @@ export default function OnboardingScreen() {
       : step === STEP.TYPE
         ? playerType !== null
         : step === STEP.EMAIL
-          ? EMAIL_RE.test(email.trim())
+          ? hasSession || EMAIL_RE.test(email.trim())
           : step === STEP.PASSWORD
             ? hasSession || password.length >= 6
             : true;
 
-  const startElo = fftt && (fftt.pointsOfficiels ?? fftt.pointsMensuels)
-    ? ffttPointsToElo((fftt.pointsOfficiels ?? fftt.pointsMensuels)!)
-    : null;
-  const showBack = step <= STEP.PASSWORD;
+  const startPts = fftt ? ffttSeedPoints(fftt) : null;
+  const startElo = startPts != null ? ffttPointsToElo(startPts) : null;
+  // Sur le 1er écran, la flèche n'a de sens que s'il y a un écran derrière (sinon GO_BACK non géré).
+  const showBack = step <= STEP.PASSWORD && (step !== STEP.NAME || router.canGoBack());
 
   return (
     <View style={styles.root}>
@@ -280,9 +427,14 @@ export default function OnboardingScreen() {
                 <ThemedText type="title">Ton email ?</ThemedText>
                 <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>Pour sauvegarder ta progression et te reconnecter.</ThemedText>
                 {hasSession ? (
-                  <View style={[styles.input, styles.readonly]}>
-                    <ThemedText type="default" themeColor="textMuted">{session?.user?.email}</ThemedText>
-                  </View>
+                  <>
+                    <View style={[styles.input, styles.readonly]}>
+                      <ThemedText type="default" themeColor="textSecondary">{session?.user?.email}</ThemedText>
+                    </View>
+                    <Pressable onPress={switchAccount} disabled={busy} style={styles.linkBtn}>
+                      <ThemedText type="smallBold" themeColor="brand">Ce n’est pas toi ? Changer de compte</ThemedText>
+                    </Pressable>
+                  </>
                 ) : (
                   <TextInput style={styles.input} placeholder="email@exemple.com" placeholderTextColor={Palette.grey} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" value={email} onChangeText={setEmail} autoFocus />
                 )}
@@ -330,7 +482,7 @@ export default function OnboardingScreen() {
               </>
             )}
 
-            {/* ── Licence FFTT trouvée ── */}
+            {/* ── Licence FFTT ── */}
             {step === STEP.FFTT && (
               ffttSearching ? (
                 <View style={styles.center}>
@@ -355,14 +507,17 @@ export default function OnboardingScreen() {
                   <View style={styles.list}>
                     {ffttResults.map((p) => {
                       const on = fftt?.numberId === p.numberId;
-                      const elo = (p.pointsOfficiels ?? p.pointsMensuels) ? ffttPointsToElo((p.pointsOfficiels ?? p.pointsMensuels)!) : null;
+                      // Points/ELO connus seulement après sélection (détail chargé via chooseFftt).
+                      const rowPts = on ? ffttSeedPoints(fftt) : null;
+                      const elo = rowPts != null ? ffttPointsToElo(rowPts) : null;
                       return (
-                        <Pressable key={p.numberId} onPress={() => setFftt(on ? null : p)} style={[styles.ffttRow, on ? styles.cardOn : styles.cardOff]}>
+                        <Pressable key={p.numberId} onPress={() => chooseFftt(p)} style={[styles.ffttRow, on ? styles.cardOn : styles.cardOff]}>
                           <View style={{ flex: 1 }}>
                             <ThemedText type="cardTitle">{p.prenom} {p.nom}</ThemedText>
                             <ThemedText type="small" themeColor="textSecondary">
                               {p.club?.nom ?? 'Club inconnu'}
-                              {p.pointsOfficiels != null ? ` · ${p.pointsOfficiels} pts` : ''}
+                              {p.classementOfficiel ? ` · ${p.classementOfficiel}` : ''}
+                              {rowPts != null ? ` · ${rowPts} pts` : ''}
                               {elo ? ` · ELO ${elo}` : ''}
                             </ThemedText>
                           </View>
@@ -378,15 +533,41 @@ export default function OnboardingScreen() {
               )
             )}
 
+            {/* ── Autorisations (priming loc + notifs) ── */}
+            {step === STEP.PERMS && (
+              <>
+                <ThemedText type="title">Dernière étape !</ThemedText>
+                <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
+                  Active ces options pour profiter à fond de Ping Pang. Tu pourras toujours les régler plus tard.
+                </ThemedText>
+                <View style={styles.list}>
+                  <PermRow
+                    icon="location-outline"
+                    title="Localisation"
+                    sub="Trouve les parties et les tables près de toi."
+                    status={location.status}
+                    onPress={() => void location.request()}
+                  />
+                  <PermRow
+                    icon="notifications-outline"
+                    title="Notifications"
+                    sub="Sois prévenu des défis reçus et des créneaux rejoints."
+                    status={notif}
+                    onPress={askNotif}
+                  />
+                </View>
+              </>
+            )}
+
             {/* ── Bienvenue ── */}
             {step === STEP.DONE && (
               <View style={styles.center}>
                 <View style={styles.logo}>
-                  <ThemedText type="title" style={{ fontSize: 48 }}>🏓</ThemedText>
+                  <ThemedText type="title" style={styles.logoEmoji}>🔥</ThemedText>
                 </View>
-                <ThemedText type="title" style={{ marginTop: Spacing.four }}>Bienvenue{firstName ? `, ${firstName}` : ''} !</ThemedText>
+                <ThemedText type="title" style={{ marginTop: Spacing.four, textAlign: 'center' }}>Bienvenue{firstName ? `, ${firstName}` : ''} !</ThemedText>
                 <ThemedText type="default" themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.two }}>
-                  {startElo ? `Ton classement de départ : ELO ${startElo}. ` : ''}Va t&apos;échauffer, c&apos;est à toi ! 🏓
+                  {startElo ? `Ton classement de départ : ELO ${startElo}. ` : ''}Va t&apos;échauffer, c&apos;est à toi !
                 </ThemedText>
               </View>
             )}
@@ -422,8 +603,8 @@ const styles = StyleSheet.create({
   input: {
     height: 54,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: SURFACE,
+    borderWidth: 1,
     borderColor: Palette.border,
     paddingHorizontal: Spacing.three,
     color: Palette.onyx,
@@ -431,7 +612,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: Spacing.two,
   },
-  readonly: { justifyContent: 'center', backgroundColor: Palette.whitePP },
+  readonly: { justifyContent: 'center' },
   linkBtn: { alignItems: 'center', paddingVertical: Spacing.three, marginTop: Spacing.one },
   retryBtn: {
     flexDirection: 'row',
@@ -445,15 +626,7 @@ const styles = StyleSheet.create({
     borderColor: Palette.evergreen,
   },
   photoWrap: { alignSelf: 'center', width: 128, height: 128, marginTop: Spacing.five },
-  photo: {
-    width: 128,
-    height: 128,
-    borderRadius: 64,
-    backgroundColor: Palette.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
+  photo: { width: 128, height: 128, borderRadius: 64, backgroundColor: Palette.white, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   photoImg: { width: 128, height: 128, borderRadius: 64 },
   photoBadge: {
     position: 'absolute',
@@ -472,15 +645,38 @@ const styles = StyleSheet.create({
   typeCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.four, borderRadius: Radius.sm, borderWidth: 1 },
   typeEmoji: { fontSize: 28 },
   cardOn: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
-  cardOff: { backgroundColor: Palette.white, borderColor: Palette.border },
+  cardOff: { backgroundColor: SURFACE, borderColor: Palette.border },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
   gridCard: { width: '48%', aspectRatio: 1.4, borderRadius: Radius.sm, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.three },
   gridLabel: { textAlign: 'center' },
   ffttRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.four, borderRadius: Radius.sm, borderWidth: 1 },
-  radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: Palette.border },
+  permRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.four,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    backgroundColor: SURFACE,
+    borderColor: Palette.border,
+  },
+  permIcon: { width: 44, height: 44, borderRadius: Radius.sm, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
+  permBtn: {
+    minWidth: 84,
+    height: 40,
+    borderRadius: Radius.xs,
+    borderWidth: 1,
+    borderColor: Palette.evergreen,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+  },
+  permBtnOn: { backgroundColor: Palette.lime },
+  radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: Palette.grey },
   radioOn: { borderColor: Palette.evergreen, backgroundColor: Palette.evergreen },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.six },
   logo: { width: 120, height: 120, borderRadius: 60, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
+  logoEmoji: { fontSize: 52, lineHeight: 64, textAlign: 'center' },
   footer: { padding: Spacing.four },
   nextBtn: { height: 54, borderRadius: Radius.sm, backgroundColor: Palette.evergreen, alignItems: 'center', justifyContent: 'center' },
 });

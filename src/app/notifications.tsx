@@ -19,6 +19,8 @@ const ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   friend_accepted: 'people',
   slot: 'calendar',
   slot_join: 'calendar-outline',
+  session_like: 'heart',
+  session_comment: 'chatbubble-ellipses',
 };
 
 function rel(iso: string): string {

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -9,9 +9,7 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchMyProfile, updateMyProfile, updatePrefs, type AccountPrefs } from '@/lib/players/profile';
 import { supabase } from '@/lib/supabase/client';
-
-const STYLES = ['Offensif', 'Défensif', 'Allround'];
-const HANDS = ['Droitier', 'Gaucher'];
+import { notify } from '@/lib/ui/alert';
 
 const PRIVACY: { key: keyof AccountPrefs; label: string }[] = [
   { key: 'profile_public', label: 'Profil public' },
@@ -35,9 +33,8 @@ const DEFAULT_PREFS: AccountPrefs = {
 export default function SettingsScreen() {
   const { session, signOut } = useAuth();
   const [displayName, setDisplayName] = useState('');
+  const [bio, setBio] = useState('');
   const [city, setCity] = useState('');
-  const [playStyle, setPlayStyle] = useState<string | null>(null);
-  const [hand, setHand] = useState<string | null>(null);
   const [ffttPoints, setFfttPoints] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefs, setPrefs] = useState<AccountPrefs>(DEFAULT_PREFS);
@@ -51,10 +48,9 @@ export default function SettingsScreen() {
       fetchMyProfile(id).then((p) => {
         if (!p) return;
         setDisplayName(p.display_name);
+        setBio(p.bio ?? '');
         setCity(p.city ?? '');
         setFfttPoints(p.fftt_points);
-        setPlayStyle(p.play_style);
-        setHand(p.handedness);
         setPrefs({
           profile_public: p.profile_public,
           stats_visible: p.stats_visible,
@@ -75,15 +71,15 @@ export default function SettingsScreen() {
 
   async function changePassword() {
     if (newPwd.length < 6) {
-      Alert.alert('Mot de passe trop court', 'Au moins 6 caractères.');
+      notify('Mot de passe trop court', 'Au moins 6 caractères.');
       return;
     }
     const { error } = await supabase.auth.updateUser({ password: newPwd });
-    if (error) Alert.alert('Erreur', error.message);
+    if (error) notify('Erreur', error.message);
     else {
       setNewPwd('');
       setPwdOpen(false);
-      Alert.alert('Mot de passe mis à jour ✅');
+      notify('Mot de passe mis à jour ✅');
     }
   }
 
@@ -94,14 +90,13 @@ export default function SettingsScreen() {
       setBusy(true);
       await updateMyProfile(id, {
         display_name: displayName.trim() || 'Joueur',
+        bio: bio.trim(),
         city: city.trim(),
-        ...(playStyle ? { play_style: playStyle } : {}),
-        ...(hand ? { handedness: hand } : {}),
       });
-      Alert.alert('Profil mis à jour ✅');
+      notify('Profil mis à jour ✅');
       router.back();
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
       setBusy(false);
     }
@@ -130,30 +125,17 @@ export default function SettingsScreen() {
           <TextInput style={styles.input} value={city} onChangeText={setCity} placeholder="Paris" placeholderTextColor={Palette.grey} />
 
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            STYLE DE JEU
+            BIO
           </ThemedText>
-          <View style={styles.pillRow}>
-            {STYLES.map((s) => (
-              <Pressable key={s} onPress={() => setPlayStyle(s)} style={[styles.pill, playStyle === s ? styles.on : styles.off]}>
-                <ThemedText type="smallBold" themeColor={playStyle === s ? 'onBrand' : 'text'}>
-                  {s}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            MAIN DIRECTRICE
-          </ThemedText>
-          <View style={styles.pillRow}>
-            {HANDS.map((h) => (
-              <Pressable key={h} onPress={() => setHand(h)} style={[styles.pill, hand === h ? styles.on : styles.off]}>
-                <ThemedText type="smallBold" themeColor={hand === h ? 'onBrand' : 'text'}>
-                  {h}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
+          <TextInput
+            style={[styles.input, styles.bioInput]}
+            value={bio}
+            onChangeText={setBio}
+            placeholder="Quelques mots sur ton jeu, tes dispos, ton club…"
+            placeholderTextColor={Palette.grey}
+            multiline
+            maxLength={280}
+          />
 
           <Pressable style={[styles.save, busy && { opacity: 0.6 }]} disabled={busy} onPress={save}>
             {busy ? (
@@ -166,7 +148,7 @@ export default function SettingsScreen() {
           </Pressable>
 
           <Pressable style={styles.linkRow} onPress={() => router.push('/link-fftt')}>
-            <ThemedText type="cardTitle">Lier mon compte FFTT</ThemedText>
+            <ThemedText type="cardTitle">{ffttPoints ? 'Mon compte FFTT' : 'Lier mon compte FFTT'}</ThemedText>
             <ThemedText type="smallBold" themeColor={ffttPoints ? 'brand' : 'textMuted'}>
               {ffttPoints ? `${ffttPoints} pts` : 'Lier'}
             </ThemedText>
@@ -269,10 +251,7 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
-  pillRow: { flexDirection: 'row', gap: Spacing.two },
-  pill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.sm, alignItems: 'center' },
-  on: { backgroundColor: Palette.evergreen },
-  off: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  bioInput: { height: 96, paddingTop: Spacing.three, textAlignVertical: 'top' },
   save: {
     marginTop: Spacing.four,
     height: 52,

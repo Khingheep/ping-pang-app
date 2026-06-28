@@ -8,8 +8,8 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Dimensions, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 
@@ -17,33 +17,33 @@ import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Colors, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { computeObjective, levelForElo } from '@/lib/elo';
+import { computeObjective, levelForElo, manualObjective, type Objective } from '@/lib/elo';
+import { fetchFfttHistory, type FfttRankingPoint } from '@/lib/fftt/link';
+import { fetchFfttMatches, type FfttMatchView } from '@/lib/fftt/matches';
 import { computeEloProgression, computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
 import { parseSetScores } from '@/lib/matches/sets';
-import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
-import { fetchTrainingSessions, formatDuration, type TrainingSession } from '@/lib/training/sessions';
+import { fetchMyProfile, updateMyGoal, type PlayerProfile } from '@/lib/players/profile';
+import { fetchTrainingSessions, type TrainingSession } from '@/lib/training/sessions';
+import { notify } from '@/lib/ui/alert';
 
 const TRACK = Colors.light.backgroundSelected; // fond des barres de progression sur card blanche
 
-const TABS = ['Vous', 'Entraînements', 'Derniers matchs'] as const;
-
-const FEELING_COLOR: Record<string, string> = {
-  Excellent: Palette.green,
-  Bien: Palette.lime,
-  Moyen: Palette.blue,
-  Difficile: Palette.red,
-};
+const TABS = ['Vous', 'Derniers matchs'] as const;
 
 function dayKey(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
 }
 
-function weekdayShort(iso: string): string {
-  const s = new Date(iso).toLocaleDateString('fr-FR', { weekday: 'long' });
-  return s.charAt(0).toUpperCase() + s.slice(1);
+const MONTHS_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+/** "janv. 2027" depuis une date ISO "YYYY-MM-DD" (parse littéral pour éviter les décalages de fuseau). */
+function monthYearLabel(iso: string): string {
+  const [y, m] = iso.split('-');
+  return `${MONTHS_FR[Number(m) - 1]} ${y}`;
 }
 
-function dayMonth(iso: string): string {
+/** Date courte "12/03" depuis une date ISO. */
+function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
 }
 
@@ -92,6 +92,38 @@ function ProgressCurve({ series }: { series: number[] }) {
       <Path d={area} fill={Palette.lime} opacity={0.3} />
       <Path d={line} stroke={Palette.evergreen} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
       <Circle cx={last.x} cy={last.y} r={4.5} fill={Palette.evergreen} />
+    </Svg>
+  );
+}
+
+/** Courbe de l'historique de classement officiel FFTT (points par phase, depuis ~2012). */
+function FfttHistoryCurve({ history }: { history: FfttRankingPoint[] }) {
+  const width = Dimensions.get('window').width - Spacing.four * 2 - Spacing.four * 2;
+  const height = 120;
+  if (history.length < 2) {
+    return (
+      <ThemedText type="small" themeColor="textMuted">
+        Historique de classement indisponible.
+      </ThemedText>
+    );
+  }
+  const vals = history.map((h) => h.points);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = Math.max(1, max - min);
+  const pad = 12;
+  const pts = vals.map((v, i) => ({
+    x: (i / (vals.length - 1)) * width,
+    y: pad + (1 - (v - min) / span) * (height - 2 * pad),
+  }));
+  const line = smoothPath(pts);
+  const area = `${line} L ${pts[pts.length - 1].x},${height} L ${pts[0].x},${height} Z`;
+  const last = pts[pts.length - 1];
+  return (
+    <Svg width={width} height={height}>
+      <Path d={area} fill={Palette.blue} opacity={0.18} />
+      <Path d={line} stroke={Palette.blue} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <Circle cx={last.x} cy={last.y} r={4.5} fill={Palette.blue} />
     </Svg>
   );
 }
@@ -148,17 +180,29 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [matches, setMatches] = useState<MatchView[]>([]);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [ffttHistory, setFfttHistory] = useState<FfttRankingPoint[]>([]);
+  const [ffttMatches, setFfttMatches] = useState<FfttMatchView[]>([]);
   const [tab, setTab] = useState(0);
+  const [goalOpen, setGoalOpen] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      const id = session?.user?.id;
-      if (!id) return;
-      fetchMyProfile(id).then(setProfile);
-      fetchRecentMatches(id, 200).then(setMatches);
-      fetchTrainingSessions(id, 200).then(setSessions);
-    }, [session?.user?.id]),
-  );
+  const reload = useCallback(() => {
+    const id = session?.user?.id;
+    if (!id) return;
+    fetchMyProfile(id).then((p) => {
+      setProfile(p);
+      if (p?.fftt_id) {
+        fetchFfttHistory(p.fftt_id).then(setFfttHistory).catch(() => {});
+        fetchFfttMatches(p.fftt_id).then(setFfttMatches).catch(() => {});
+      } else {
+        setFfttHistory([]);
+        setFfttMatches([]);
+      }
+    });
+    fetchRecentMatches(id, 200).then(setMatches);
+    fetchTrainingSessions(id, 200).then(setSessions);
+  }, [session?.user?.id]);
+
+  useFocusEffect(reload);
 
   const name = profile?.display_name ?? 'Joueur';
   const elo = profile?.elo ?? 1200;
@@ -171,8 +215,66 @@ export default function ProfileScreen() {
   const bestPerf = deltas.length ? Math.max(...deltas) : null;
   const worstContre = deltas.length ? Math.min(...deltas) : null;
 
-  const objective = computeObjective(elo);
+  // Objectif manuel (si fixé) sinon palier auto. La progression part de l'ELO figé à la création.
+  const hasGoal = profile?.goal_elo != null;
+  const objective: Objective = hasGoal
+    ? manualObjective(elo, profile!.goal_elo!, profile!.goal_start_elo ?? elo)
+    : computeObjective(elo);
   const progression = computeEloProgression(matches);
+
+  // Liste unifiée « Derniers matchs » : matchs Ping Pang confirmés + matchs officiels FFTT,
+  // triés du plus récent au plus ancien (les matchs sans date FFTT lisible passent en fin).
+  const unifiedMatches = useMemo(() => {
+    const ppp = confirmed.map((m) => ({ source: 'ppp' as const, date: m.date, ppp: m }));
+    const fftt = ffttMatches.map((m) => ({ source: 'fftt' as const, date: m.date ?? '', fftt: m }));
+    return [...ppp, ...fftt].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
+  }, [confirmed, ffttMatches]);
+
+  // --- Éditeur d'objectif ---
+  const [goalEloInput, setGoalEloInput] = useState('');
+  const [goalMonthIso, setGoalMonthIso] = useState<string | null>(null);
+
+  // 18 prochains mois (1er du mois) comme échéances possibles.
+  const monthOptions = useMemo(() => {
+    const out: string[] = [];
+    const now = new Date();
+    for (let i = 1; i <= 18; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`);
+    }
+    return out;
+  }, []);
+
+  function openGoal() {
+    setGoalEloInput(profile?.goal_elo != null ? String(profile.goal_elo) : String(computeObjective(elo).target));
+    setGoalMonthIso(profile?.goal_deadline ?? null);
+    setGoalOpen(true);
+  }
+
+  async function saveGoal() {
+    const id = session?.user?.id;
+    if (!id) return;
+    const target = parseInt(goalEloInput, 10);
+    if (!target || target <= elo) {
+      notify('Objectif', `Choisis un ELO supérieur à ton ELO actuel (${elo}).`);
+      return;
+    }
+    try {
+      await updateMyGoal(id, { goalElo: target, goalDeadline: goalMonthIso, currentElo: elo });
+      setGoalOpen(false);
+      reload();
+    } catch (e) {
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+    }
+  }
+
+  async function removeGoal() {
+    const id = session?.user?.id;
+    if (!id) return;
+    await updateMyGoal(id, null).catch(() => {});
+    setGoalOpen(false);
+    reload();
+  }
 
   // Série d'ELO cumulé (du plus ancien au plus récent) pour la courbe.
   const eloSeries = (() => {
@@ -212,7 +314,7 @@ export default function ProfileScreen() {
             <View style={styles.heroText}>
               <ThemedText type="subtitle">{name}</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                {profile?.player_type ?? level.label}
+                {profile?.bio?.trim() || profile?.player_type || level.label}
               </ThemedText>
               {profile?.city ? (
                 <ThemedText type="small" themeColor="textSecondary">
@@ -258,40 +360,55 @@ export default function ProfileScreen() {
 
           {tab === 0 ? (
             <View style={styles.tabBody}>
-              {/* Objectif */}
-              <View style={styles.objCard}>
+              {/* Objectif (éditable : appui = éditeur) */}
+              <Pressable style={styles.objCard} onPress={openGoal}>
                 <View style={styles.objTop}>
                   <View style={styles.ring}>
-                    <ThemedText type="smallBold" style={{ color: Palette.evergreen }}>
-                      {Math.round(objective.pct * 100)}%
-                    </ThemedText>
+                    {hasGoal ? (
+                      <ThemedText type="smallBold" style={{ color: Palette.evergreen }}>
+                        {Math.round(objective.pct * 100)}%
+                      </ThemedText>
+                    ) : (
+                      <Ionicons name="flag-outline" size={20} color={Palette.evergreen} />
+                    )}
                   </View>
                   <View style={styles.objText}>
-                    <ThemedText type="cardTitle">{objective.toGain} points à gagner</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      Objectif · atteindre {objective.target}
-                      {objective.nextLabel ? ` (${objective.nextLabel})` : ''}
-                    </ThemedText>
+                    {hasGoal ? (
+                      <>
+                        <ThemedText type="cardTitle">
+                          {objective.toGain > 0 ? `${objective.toGain} points à gagner` : 'Objectif atteint 🎉'}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Atteindre {objective.target}
+                          {profile?.goal_deadline ? ` · avant ${monthYearLabel(profile.goal_deadline)}` : ''}
+                        </ThemedText>
+                      </>
+                    ) : (
+                      <>
+                        <ThemedText type="cardTitle">Définis ton objectif</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Fixe un ELO à atteindre et une échéance.
+                        </ThemedText>
+                      </>
+                    )}
                   </View>
+                  <Ionicons name="pencil" size={16} color={Palette.grey} />
                 </View>
-                <View style={styles.barTrack}>
-                  <View style={[styles.barFill, { width: `${Math.round(objective.pct * 100)}%` }]} />
-                </View>
-              </View>
+                {hasGoal ? (
+                  <View style={styles.barTrack}>
+                    <View style={[styles.barFill, { width: `${Math.round(objective.pct * 100)}%` }]} />
+                  </View>
+                ) : null}
+              </Pressable>
 
               {/* Matchs joués */}
               <View style={styles.playedRow}>
-                <View style={styles.barTrackLg}>
-                  <View style={[styles.barFill, { width: `${Math.round(objective.pct * 100)}%` }]} />
-                </View>
-                <View style={styles.playedCount}>
-                  <ThemedText type="title" themeColor="brand" style={styles.playedNum}>
-                    {stats.total}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    matchs joués
-                  </ThemedText>
-                </View>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Matchs joués
+                </ThemedText>
+                <ThemedText type="title" themeColor="brand" style={styles.playedNum}>
+                  {stats.total}
+                </ThemedText>
               </View>
 
               {/* Progression ELO */}
@@ -313,6 +430,28 @@ export default function ProfileScreen() {
                 </View>
               </View>
 
+              {/* Historique classement FFTT */}
+              {profile?.fftt_id && ffttHistory.length >= 2 ? (
+                <>
+                  <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                    Classement FFTT
+                  </ThemedText>
+                  <View style={styles.card}>
+                    <View style={styles.progHead}>
+                      <ThemedText type="title" themeColor="brand" style={styles.progElo}>
+                        {ffttHistory[ffttHistory.length - 1].points} pts
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted">
+                        depuis {ffttHistory[0].date.slice(0, 4)}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.curveWrap}>
+                      <FfttHistoryCurve history={ffttHistory} />
+                    </View>
+                  </View>
+                </>
+              ) : null}
+
               {/* Activité */}
               <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
                 Activité
@@ -325,116 +464,195 @@ export default function ProfileScreen() {
 
           {tab === 1 ? (
             <View style={styles.tabBody}>
-              <Pressable style={styles.addBtn} onPress={() => router.push('/new-training')}>
-                <Ionicons name="add-circle-outline" size={22} color={Palette.evergreen} />
-                <ThemedText type="cardTitle" themeColor="brand">
-                  Rajouter une séance
-                </ThemedText>
-              </Pressable>
-
-              {sessions.length === 0 ? (
+              {unifiedMatches.length === 0 ? (
                 <View style={styles.empty}>
                   <ThemedText type="default" themeColor="textSecondary">
-                    Aucune séance enregistrée. Note ta première séance ! 🏓
+                    Aucun match pour l&apos;instant.
+                    {profile?.fftt_id ? '' : ' Lie ton compte FFTT pour voir tes matchs officiels.'}
                   </ThemedText>
                 </View>
               ) : (
                 <View style={styles.list}>
-                  {sessions.map((s) => (
-                    <View key={s.id} style={styles.sessionRow}>
-                      <View style={styles.sessionDate}>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {weekdayShort(s.created_at)}
-                        </ThemedText>
-                        <ThemedText type="cardTitle">{dayMonth(s.created_at)}</ThemedText>
-                      </View>
-                      <View style={styles.sessionBig}>
-                        <View style={[styles.feelingDot, { backgroundColor: (s.feeling && FEELING_COLOR[s.feeling]) || Palette.border }]} />
-                        <View style={{ flex: 1 }}>
-                          <ThemedText type="cardTitle" numberOfLines={1}>
-                            {s.strokes.length ? `Session ${s.strokes[0]}` : 'Séance'}
-                          </ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary">
-                            {formatDuration(s.duration_min)}
-                            {s.feeling ? ` · ${s.feeling}` : ''}
-                          </ThemedText>
-                        </View>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          ) : null}
-
-          {tab === 2 ? (
-            <View style={styles.tabBody}>
-              {confirmed.length === 0 ? (
-                <View style={styles.empty}>
-                  <ThemedText type="default" themeColor="textSecondary">
-                    Aucun match confirmé pour l&apos;instant.
-                  </ThemedText>
-                </View>
-              ) : (
-                <View style={styles.list}>
-                  {confirmed.map((m) => {
-                    const sets = parseSetScores(m.setScores);
-                    return (
-                      <View key={m.id} style={styles.matchRow}>
-                        <View style={styles.matchPlayers}>
-                          <View style={[styles.namePill, m.won ? styles.pillWin : styles.pillLose]}>
-                            <ThemedText type="small" numberOfLines={1}>
-                              {name}
-                            </ThemedText>
-                          </View>
-                          <View style={[styles.namePill, m.won ? styles.pillLose : styles.pillWin]}>
-                            <ThemedText type="small" numberOfLines={1}>
-                              {m.opponent}
-                            </ThemedText>
-                          </View>
-                        </View>
-
-                        {sets.length ? (
-                          <View style={styles.setGrid}>
-                            <View style={styles.setGridRow}>
-                              {sets.map((s, i) => (
-                                <View key={i} style={styles.setCell}>
-                                  <ThemedText type="smallBold" themeColor={s.a >= s.b ? 'text' : 'textMuted'}>
-                                    {s.a}
-                                  </ThemedText>
-                                </View>
-                              ))}
-                            </View>
-                            <View style={styles.setGridRow}>
-                              {sets.map((s, i) => (
-                                <View key={i} style={styles.setCell}>
-                                  <ThemedText type="smallBold" themeColor={s.b > s.a ? 'text' : 'textMuted'}>
-                                    {s.b}
-                                  </ThemedText>
-                                </View>
-                              ))}
-                            </View>
-                          </View>
-                        ) : (
-                          <ThemedText type="subtitle" themeColor={m.won ? 'brand' : 'textMuted'}>
-                            {m.score || '—'}
-                          </ThemedText>
-                        )}
-
-                        <ThemedText
-                          type="cardTitle"
-                          style={[styles.matchDelta, { color: m.delta > 0 ? Palette.evergreen : m.delta < 0 ? Palette.redInk : Palette.grey }]}>
-                          {m.delta ? `${m.delta > 0 ? '+' : ''}${m.delta}` : '—'}
-                        </ThemedText>
-                      </View>
-                    );
-                  })}
+                  {unifiedMatches.map((item) =>
+                    item.source === 'ppp' ? (
+                      <PppMatchCard key={`ppp-${item.ppp.id}`} m={item.ppp} myName={name} />
+                    ) : (
+                      <FfttMatchCard key={`fftt-${item.fftt.id}`} m={item.fftt} myName={name} />
+                    ),
+                  )}
                 </View>
               )}
             </View>
           ) : null}
         </ScrollView>
+
+        {/* Éditeur d'objectif */}
+        <Modal visible={goalOpen} transparent animationType="slide" onRequestClose={() => setGoalOpen(false)}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setGoalOpen(false)} />
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <ThemedText type="cardTitle">Mon objectif</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              ELO actuel : {elo}
+            </ThemedText>
+
+            <ThemedText type="smallBold" themeColor="textSecondary" style={styles.modalLbl}>
+              ELO À ATTEINDRE
+            </ThemedText>
+            <TextInput
+              style={styles.modalInput}
+              value={goalEloInput}
+              onChangeText={(t) => setGoalEloInput(t.replace(/[^0-9]/g, ''))}
+              keyboardType="number-pad"
+              maxLength={4}
+              placeholder="Ex : 2200"
+              placeholderTextColor={Palette.grey}
+            />
+
+            <ThemedText type="smallBold" themeColor="textSecondary" style={styles.modalLbl}>
+              AVANT (OPTIONNEL)
+            </ThemedText>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monthRow}>
+              {monthOptions.map((iso) => {
+                const on = goalMonthIso === iso;
+                return (
+                  <Pressable
+                    key={iso}
+                    onPress={() => setGoalMonthIso(on ? null : iso)}
+                    style={[styles.monthChip, on ? styles.monthChipOn : styles.monthChipOff]}>
+                    <ThemedText type="smallBold" themeColor={on ? 'onBrand' : 'text'} numberOfLines={1}>
+                      {monthYearLabel(iso)}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Pressable style={styles.modalSave} onPress={saveGoal}>
+              <ThemedText type="cardTitle" themeColor="onBrand">
+                Enregistrer
+              </ThemedText>
+            </Pressable>
+            {hasGoal ? (
+              <Pressable style={styles.modalRemove} onPress={removeGoal}>
+                <ThemedText type="smallBold" themeColor="danger">
+                  Retirer l&apos;objectif
+                </ThemedText>
+              </Pressable>
+            ) : null}
+          </View>
+        </Modal>
       </SafeAreaView>
+    </View>
+  );
+}
+
+/** Carte d'un match Ping Pang Paris (score détaillé + delta ELO). */
+function PppMatchCard({ m, myName }: { m: MatchView; myName: string }) {
+  const sets = parseSetScores(m.setScores);
+  return (
+    <View style={styles.matchCard}>
+      <View style={styles.matchMeta}>
+        <View style={[styles.srcBadge, styles.srcPpp]}>
+          <ThemedText type="small" themeColor="onBrand" style={styles.srcBadgeTxt}>
+            Ping Pang
+          </ThemedText>
+        </View>
+        <ThemedText type="small" themeColor="textMuted">
+          {shortDate(m.date)}
+        </ThemedText>
+      </View>
+      <View style={styles.matchBody}>
+        <View style={styles.matchPlayers}>
+          <View style={[styles.namePill, m.won ? styles.pillWin : styles.pillLose]}>
+            <ThemedText type="small" numberOfLines={1}>
+              {myName}
+            </ThemedText>
+          </View>
+          <View style={[styles.namePill, m.won ? styles.pillLose : styles.pillWin]}>
+            <ThemedText type="small" numberOfLines={1}>
+              {m.opponent}
+            </ThemedText>
+          </View>
+        </View>
+
+        {sets.length ? (
+          <View style={styles.setGrid}>
+            <View style={styles.setGridRow}>
+              {sets.map((s, i) => (
+                <View key={i} style={styles.setCell}>
+                  <ThemedText type="smallBold" themeColor={s.a >= s.b ? 'text' : 'textMuted'}>
+                    {s.a}
+                  </ThemedText>
+                </View>
+              ))}
+            </View>
+            <View style={styles.setGridRow}>
+              {sets.map((s, i) => (
+                <View key={i} style={styles.setCell}>
+                  <ThemedText type="smallBold" themeColor={s.b > s.a ? 'text' : 'textMuted'}>
+                    {s.b}
+                  </ThemedText>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <ThemedText type="subtitle" themeColor={m.won ? 'brand' : 'textMuted'}>
+            {m.score || '—'}
+          </ThemedText>
+        )}
+
+        <ThemedText
+          type="cardTitle"
+          style={[styles.matchDelta, { color: m.delta > 0 ? Palette.evergreen : m.delta < 0 ? Palette.redInk : Palette.grey }]}>
+          {m.delta ? `${m.delta > 0 ? '+' : ''}${m.delta}` : '—'}
+        </ThemedText>
+      </View>
+    </View>
+  );
+}
+
+/** Carte d'un match officiel FFTT (adversaire + classement, V/D, points FFTT). */
+function FfttMatchCard({ m, myName }: { m: FfttMatchView; myName: string }) {
+  const gain = m.gainPerte;
+  return (
+    <View style={styles.matchCard}>
+      <View style={styles.matchMeta}>
+        <View style={[styles.srcBadge, styles.srcFftt]}>
+          <ThemedText type="small" themeColor="text" style={styles.srcBadgeTxt}>
+            FFTT
+          </ThemedText>
+        </View>
+        <ThemedText type="small" themeColor="textMuted">
+          {m.date ? shortDate(m.date) : m.dateRaw}
+        </ThemedText>
+      </View>
+      <View style={styles.matchBody}>
+        <View style={styles.matchPlayers}>
+          <View style={[styles.namePill, m.won === false ? styles.pillLose : styles.pillWin]}>
+            <ThemedText type="small" numberOfLines={1}>
+              {myName}
+            </ThemedText>
+          </View>
+          <View style={[styles.namePill, m.won === false ? styles.pillWin : styles.pillLose]}>
+            <ThemedText type="small" numberOfLines={1}>
+              {m.opponent}
+              {m.opponentRank ? ` · ${m.opponentRank}` : ''}
+            </ThemedText>
+          </View>
+        </View>
+
+        <ThemedText type="subtitle" themeColor={m.won === true ? 'brand' : m.won === false ? 'textMuted' : 'textSecondary'}>
+          {m.won === true ? 'V' : m.won === false ? 'D' : '—'}
+        </ThemedText>
+
+        <ThemedText
+          type="cardTitle"
+          style={[styles.matchDelta, { color: gain != null && gain > 0 ? Palette.evergreen : gain != null && gain < 0 ? Palette.redInk : Palette.grey }]}>
+          {gain != null ? `${gain > 0 ? '+' : ''}${gain}` : '—'}
+        </ThemedText>
+      </View>
     </View>
   );
 }
@@ -494,11 +712,14 @@ const styles = StyleSheet.create({
   },
   objText: { flex: 1, gap: Spacing.half },
   barTrack: { height: 8, borderRadius: Radius.pill, backgroundColor: TRACK, overflow: 'hidden' },
-  barTrackLg: { flex: 1, height: 12, borderRadius: Radius.pill, backgroundColor: TRACK, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: Palette.evergreen, borderRadius: Radius.pill },
 
-  playedRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  playedCount: { alignItems: 'flex-end' },
+  playedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.two,
+  },
   playedNum: { fontSize: 40, lineHeight: 44 },
 
   section: { marginTop: Spacing.one },
@@ -523,17 +744,6 @@ const styles = StyleSheet.create({
   dotOn: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
   dotFuture: { opacity: 0.3 },
 
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    height: 50,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.white,
-    borderWidth: 1,
-    borderColor: Palette.evergreen,
-  },
   empty: {
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
@@ -543,40 +753,20 @@ const styles = StyleSheet.create({
   },
   list: { gap: Spacing.two },
 
-  sessionRow: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.two },
-  sessionDate: {
-    width: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    borderRadius: Radius.sm,
-    paddingVertical: Spacing.two,
-  },
-  sessionBig: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three,
+  matchCard: {
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.three,
+    gap: Spacing.two,
   },
-  feelingDot: { width: 10, height: 10, borderRadius: 5 },
-
-  matchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    borderRadius: Radius.sm,
-    padding: Spacing.three,
-  },
+  matchMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  srcBadge: { borderRadius: Radius.xs, paddingHorizontal: Spacing.two, paddingVertical: 2 },
+  srcBadgeTxt: { fontSize: 10 },
+  srcPpp: { backgroundColor: Palette.evergreen },
+  srcFftt: { backgroundColor: Palette.blue, opacity: 0.9 },
+  matchBody: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   matchPlayers: { flex: 1, gap: Spacing.one },
   namePill: { borderRadius: Radius.xs, paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, alignSelf: 'flex-start', maxWidth: '100%' },
   pillWin: { backgroundColor: Palette.green },
@@ -593,4 +783,44 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   matchDelta: { width: 44, textAlign: 'right' },
+
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
+  modalSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: Palette.whitePP,
+    borderTopLeftRadius: Radius.lg,
+    borderTopRightRadius: Radius.lg,
+    padding: Spacing.four,
+    paddingBottom: Spacing.six,
+    gap: Spacing.two,
+  },
+  modalHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: Palette.border, marginBottom: Spacing.two },
+  modalLbl: { marginTop: Spacing.two },
+  modalInput: {
+    height: 52,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    paddingHorizontal: Spacing.three,
+    color: Palette.onyx,
+    fontFamily: 'OpenSauceOne-Regular',
+    fontSize: 17,
+  },
+  monthRow: { gap: Spacing.two, paddingVertical: Spacing.one },
+  monthChip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderRadius: Radius.xs },
+  monthChipOn: { backgroundColor: Palette.evergreen },
+  monthChipOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  modalSave: {
+    marginTop: Spacing.three,
+    height: 52,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.evergreen,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalRemove: { alignItems: 'center', padding: Spacing.three },
 });

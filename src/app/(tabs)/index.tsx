@@ -8,17 +8,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { type Href, router, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { MatchScoreboard } from '@/components/match-scoreboard';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { fetchFeed, type FeedEvent } from '@/lib/feed/feed';
 import { confirmMatch, disputeMatch, fetchPendingToConfirm, type PendingMatch } from '@/lib/matches/confirm';
+import { fetchRecentMatches, type MatchView } from '@/lib/matches/history';
+import { likeMatch, unlikeMatch } from '@/lib/matches/social';
 import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 import { unreadCount } from '@/lib/social/notifications';
+import { confirm, notify } from '@/lib/ui/alert';
 import {
   fetchSessionsFeed,
   formatDuration,
@@ -27,7 +30,7 @@ import {
   type SessionFeedItem,
 } from '@/lib/training/sessions';
 
-const TABS = ['Entraînements', 'Activité'] as const;
+const TABS = ['Entraînements', 'Matchs'] as const;
 
 function relativeDate(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -44,7 +47,7 @@ export default function FeedScreen() {
   const [tab, setTab] = useState(0);
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [sessions, setSessions] = useState<SessionFeedItem[]>([]);
-  const [matchFeed, setMatchFeed] = useState<FeedEvent[]>([]);
+  const [matches, setMatches] = useState<MatchView[]>([]);
   const [pending, setPending] = useState<PendingMatch[]>([]);
   const [unread, setUnread] = useState(0);
   const [actingId, setActingId] = useState<string | null>(null);
@@ -53,7 +56,7 @@ export default function FeedScreen() {
     if (!myId) return;
     fetchMyProfile(myId).then(setProfile);
     fetchSessionsFeed(myId, 40).then(setSessions);
-    fetchFeed(40).then(setMatchFeed);
+    fetchRecentMatches(myId, 40).then(setMatches);
     fetchPendingToConfirm(myId).then(setPending);
     unreadCount().then(setUnread);
   }, [myId]);
@@ -70,31 +73,29 @@ export default function FeedScreen() {
         params: { matchId: m.id, won: String(r.won), delta: String(r.delta_me), opponentName: m.proposerName, score: m.myScore },
       });
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
       setActingId(null);
     }
   }
 
-  function onDispute(m: PendingMatch) {
-    Alert.alert('Contester le score ?', `Le match contre ${m.proposerName} sera marqué comme contesté (aucun ELO).`, [
-      { text: 'Annuler', style: 'cancel' },
-      {
-        text: 'Contester',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            setActingId(m.id);
-            await disputeMatch(m.id);
-            load();
-          } catch (e) {
-            Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
-          } finally {
-            setActingId(null);
-          }
-        },
-      },
-    ]);
+  async function onDispute(m: PendingMatch) {
+    const ok = await confirm({
+      title: 'Contester le score ?',
+      message: `Le match contre ${m.proposerName} sera marqué comme contesté (aucun ELO).`,
+      confirmText: 'Contester',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      setActingId(m.id);
+      await disputeMatch(m.id);
+      load();
+    } catch (e) {
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+    } finally {
+      setActingId(null);
+    }
   }
 
   async function toggleLike(item: SessionFeedItem) {
@@ -115,15 +116,37 @@ export default function FeedScreen() {
     }
   }
 
+  async function toggleLikeMatch(item: MatchView) {
+    if (!myId) return;
+    const liked = !item.liked;
+    // optimiste
+    setMatches((prev) =>
+      prev.map((m) => (m.id === item.id ? { ...m, liked, likeCount: m.likeCount + (liked ? 1 : -1) } : m)),
+    );
+    try {
+      if (liked) await likeMatch(item.id, myId);
+      else await unlikeMatch(item.id, myId);
+    } catch {
+      // rollback réseau
+      setMatches((prev) =>
+        prev.map((m) => (m.id === item.id ? { ...m, liked: !liked, likeCount: m.likeCount + (liked ? -1 : 1) } : m)),
+      );
+    }
+  }
+
   const name = profile?.display_name ?? 'Joueur';
   // Feed social : on ne montre pas ses propres séances (seulement celles des autres).
   const visibleSessions = sessions.filter((s) => s.author.id !== myId);
-  // Onglet « Activité » : tout ce qui se passe (matchs, tournois gagnés, créneaux ouverts, nouveaux).
-  const visibleMatches = matchFeed;
+  // Onglet « Matchs » : mes matchs confirmés, avec le détail des manches.
+  const visibleMatches = matches.filter((m) => m.status === 'confirmed');
 
   return (
     <View style={styles.root}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        overScrollMode="never"
+        contentContainerStyle={styles.scroll}>
         {/* Header marque */}
         <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
           <Pressable style={styles.headerProfile} onPress={() => router.push('/profile' as Href)} hitSlop={8}>
@@ -209,105 +232,127 @@ export default function FeedScreen() {
             ) : (
               <View style={styles.list}>
                 {visibleSessions.map((s) => (
-                  <View key={s.id} style={styles.card}>
-                    <Pressable style={styles.cardHead} onPress={() => router.push({ pathname: '/player', params: { id: s.author.id } })}>
-                      <Avatar name={s.author.name} size={40} uri={s.author.avatarUrl} color={Palette.purple} />
-                      <View style={{ flex: 1 }}>
-                        <ThemedText type="cardTitle" numberOfLines={1}>
-                          {s.author.name}
-                        </ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">
-                          {relativeDate(s.createdAt)}
-                        </ThemedText>
-                      </View>
-                    </Pressable>
-
-                    <View style={styles.cardBody}>
-                      <ThemedText type="cardTitle">
-                        {s.isSolo ? 'Séance solo' : 'Séance'}
-                        {s.strokes.length ? ` · ${s.strokes[0]}` : ''}
-                      </ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {formatDuration(s.durationMin)}
-                        {s.venueName ? ` · ${s.venueName}` : ''}
-                        {s.feeling ? ` · ${s.feeling}` : ''}
-                      </ThemedText>
-                      {s.note ? (
-                        <ThemedText type="default" numberOfLines={2} style={{ marginTop: Spacing.half }}>
-                          {s.note}
-                        </ThemedText>
-                      ) : null}
-                    </View>
-
-                    {s.strokes.length ? (
-                      <View style={styles.tagsRow}>
-                        {s.strokes.slice(0, 4).map((st) => (
-                          <View key={st} style={styles.tag}>
-                            <ThemedText type="small" themeColor="brand">
-                              {st}
+                  <Pressable key={s.id} style={styles.card} onPress={() => router.push({ pathname: '/session', params: { id: s.id } })}>
+                    <View style={styles.cardRow}>
+                      {/* Colonne gauche : contenu texte */}
+                      <View style={styles.cardCol}>
+                        <Pressable style={styles.cardHead} onPress={() => router.push({ pathname: '/player', params: { id: s.author.id } })}>
+                          <Avatar name={s.author.name} size={36} uri={s.author.avatarUrl} color={Palette.purple} />
+                          <View style={{ flex: 1 }}>
+                            <ThemedText type="cardTitle" numberOfLines={1}>
+                              {s.author.name}
+                            </ThemedText>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              {relativeDate(s.createdAt)}
                             </ThemedText>
                           </View>
-                        ))}
+                        </Pressable>
+
+                        <View style={styles.cardBody}>
+                          <ThemedText type="cardTitle" numberOfLines={2}>
+                            {s.isSolo ? 'Séance solo' : 'Séance'}
+                            {s.strokes.length ? ` · ${s.strokes[0]}` : ''}
+                          </ThemedText>
+                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                            {formatDuration(s.durationMin)}
+                            {s.venueName ? ` · ${s.venueName}` : ''}
+                            {s.feeling ? ` · ${s.feeling}` : ''}
+                          </ThemedText>
+                          {s.note ? (
+                            <ThemedText type="default" numberOfLines={2} style={{ marginTop: Spacing.half }}>
+                              {s.note}
+                            </ThemedText>
+                          ) : null}
+                        </View>
+
+                        {s.strokes.length ? (
+                          <View style={styles.tagsRow}>
+                            {s.strokes.slice(0, 3).map((st) => (
+                              <View key={st} style={styles.tag}>
+                                <ThemedText type="small" themeColor="brand">
+                                  {st}
+                                </ThemedText>
+                              </View>
+                            ))}
+                          </View>
+                        ) : null}
+
+                        <View style={styles.cardFoot}>
+                          <Pressable style={styles.likeBtn} onPress={() => toggleLike(s)} hitSlop={8}>
+                            <Ionicons
+                              name={s.liked ? 'heart' : 'heart-outline'}
+                              size={20}
+                              color={s.liked ? Palette.redInk : Palette.grey}
+                            />
+                            <ThemedText type="smallBold" themeColor={s.liked ? 'danger' : 'textSecondary'}>
+                              {s.likeCount > 0 ? s.likeCount : "J'aime"}
+                            </ThemedText>
+                          </Pressable>
+                          <Pressable
+                            style={styles.likeBtn}
+                            onPress={() => router.push({ pathname: '/session', params: { id: s.id } })}
+                            hitSlop={8}>
+                            <Ionicons name="chatbubble-outline" size={19} color={Palette.grey} />
+                            {s.commentCount > 0 ? (
+                              <ThemedText type="smallBold" themeColor="textSecondary">
+                                {s.commentCount}
+                              </ThemedText>
+                            ) : null}
+                          </Pressable>
+                        </View>
                       </View>
-                    ) : null}
 
-                    {s.photoUrl ? (
-                      <Image source={{ uri: s.photoUrl }} style={styles.photoFull} contentFit="cover" transition={200} />
-                    ) : null}
-
-                    <View style={styles.cardFoot}>
-                      <Pressable style={styles.likeBtn} onPress={() => toggleLike(s)} hitSlop={8}>
-                        <Ionicons
-                          name={s.liked ? 'heart' : 'heart-outline'}
-                          size={20}
-                          color={s.liked ? Palette.redInk : Palette.grey}
-                        />
-                        <ThemedText type="smallBold" themeColor={s.liked ? 'danger' : 'textSecondary'}>
-                          {s.likeCount > 0 ? s.likeCount : "J'aime"}
-                        </ThemedText>
-                      </Pressable>
+                      {/* Colonne droite : photo (la 1re, + badge s'il y en a plusieurs) */}
+                      {s.photoUrls.length ? (
+                        <View style={styles.photoSide}>
+                          <Image source={{ uri: s.photoUrls[0] }} style={styles.photoSideImg} contentFit="cover" transition={200} />
+                          {s.photoUrls.length > 1 ? (
+                            <View style={styles.photoCountBadge}>
+                              <Ionicons name="images-outline" size={12} color={Palette.whitePP} />
+                              <ThemedText type="smallBold" themeColor="onBrand">
+                                {s.photoUrls.length}
+                              </ThemedText>
+                            </View>
+                          ) : null}
+                        </View>
+                      ) : null}
                     </View>
-                  </View>
+                  </Pressable>
                 ))}
               </View>
             )
           ) : null}
 
-          {/* Activité */}
+          {/* Matchs */}
           {tab === 1 ? (
             visibleMatches.length === 0 ? (
               <View style={styles.empty}>
                 <ThemedText type="default" themeColor="textSecondary">
-                  Aucune activité récente.
+                  Aucun match pour l’instant. Lance un défi ! 🏓
                 </ThemedText>
               </View>
             ) : (
               <View style={styles.list}>
-                {visibleMatches.map((f) => (
-                  <View key={f.id} style={styles.matchRow}>
-                    <Avatar
-                      name={f.actorName ?? '?'}
-                      size={40}
-                      color={f.type === 'slot' ? Palette.blue : f.type === 'newcomer' ? Palette.purple : Palette.lime}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <ThemedText type="cardTitle" numberOfLines={1}>
-                        {f.title}
-                      </ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {f.body ? `${f.body} · ` : ''}
-                        {relativeDate(f.createdAt)}
-                      </ThemedText>
-                    </View>
-                    {f.eloDelta ? (
-                      <View style={[styles.deltaChip, { backgroundColor: f.eloDelta > 0 ? Palette.lime : Palette.whitePP }]}>
-                        <ThemedText type="smallBold" themeColor={f.eloDelta > 0 ? 'brand' : 'textMuted'}>
-                          {f.eloDelta > 0 ? '+' : ''}
-                          {f.eloDelta}
-                        </ThemedText>
-                      </View>
-                    ) : null}
-                  </View>
+                {visibleMatches.map((m) => (
+                  <MatchScoreboard
+                    key={m.id}
+                    opponent={m.opponent}
+                    meName={name}
+                    meAvatarUrl={profile?.avatar_url}
+                    setScores={m.setScores}
+                    score={m.score}
+                    won={m.won}
+                    delta={m.delta}
+                    ranked={m.ranked}
+                    format={m.format}
+                    date={m.date}
+                    likeCount={m.likeCount}
+                    liked={m.liked}
+                    commentCount={m.commentCount}
+                    onLike={() => toggleLikeMatch(m)}
+                    onComment={() => router.push({ pathname: '/match', params: { id: m.id } })}
+                    onPress={() => router.push({ pathname: '/match', params: { id: m.id } })}
+                  />
                 ))}
               </View>
             )
@@ -353,27 +398,29 @@ const styles = StyleSheet.create({
     borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.three,
-    gap: Spacing.two,
   },
+  cardRow: { flexDirection: 'row', gap: Spacing.three },
+  cardCol: { flex: 1, gap: Spacing.two },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   cardBody: { gap: Spacing.half },
-  photoFull: { width: '100%', height: 190, borderRadius: Radius.sm, backgroundColor: Palette.whitePP },
-  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
-  tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border, paddingTop: Spacing.two },
-  likeBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-
-  matchRow: {
+  photoSide: { width: 132, alignSelf: 'stretch', minHeight: 132, borderRadius: Radius.sm, backgroundColor: Palette.whitePP, overflow: 'hidden' },
+  photoSideImg: { width: '100%', height: '100%' },
+  photoCountBadge: {
+    position: 'absolute',
+    top: Spacing.one,
+    right: Spacing.one,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
+    gap: 3,
+    paddingHorizontal: Spacing.one,
+    paddingVertical: 2,
     borderRadius: Radius.sm,
-    padding: Spacing.three,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  deltaChip: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
+  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
+  tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.four, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border, paddingTop: Spacing.two },
+  likeBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
 
   confirmCard: {
     backgroundColor: Palette.white,

@@ -9,7 +9,6 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -23,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { notify } from '@/lib/ui/alert';
 
 export default function LoginScreen() {
   const { signInWithEmail } = useAuth();
@@ -32,7 +32,7 @@ export default function LoginScreen() {
 
   async function submitEmail() {
     if (!email || !password) {
-      Alert.alert('Champs requis', 'Renseigne ton email et ton mot de passe.');
+      notify('Champs requis', 'Renseigne ton email et ton mot de passe.');
       return;
     }
     try {
@@ -40,7 +40,7 @@ export default function LoginScreen() {
       await signInWithEmail(email.trim(), password);
       // La navigation est gérée par le RootNavigator dès que la session s'ouvre.
     } catch (e) {
-      Alert.alert('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     } finally {
       setBusy(false);
     }
