@@ -1,3 +1,6 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 
 export type ProposeResult = { match_id: string; status: 'pending'; won: boolean; preview_delta: number };
@@ -81,4 +84,40 @@ export async function disputeMatch(matchId: string): Promise<{ match_id: string;
   const { data, error } = await supabase.rpc('dispute_match', { p_match: matchId });
   if (error) throw error;
   return data as { match_id: string; status: 'disputed' };
+}
+
+/** Matchs en attente de ma confirmation (mis en cache). */
+export function usePendingToConfirm(myId: string | undefined) {
+  return useQuery({
+    queryKey: qk.pending(myId ?? 'anon'),
+    queryFn: () => fetchPendingToConfirm(myId!),
+    enabled: !!myId,
+    staleTime: STALE.pending,
+  });
+}
+
+/** Confirme un match (RPC) + invalide les caches impactés (pending, feed, profil, classement). */
+export function useConfirmMatch(myId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (matchId: string) => confirmMatch(matchId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.pending(myId) });
+      void qc.invalidateQueries({ queryKey: ['feed'] });
+      void qc.invalidateQueries({ queryKey: qk.profile(myId) });
+      void qc.invalidateQueries({ queryKey: qk.matches.recent(myId) });
+      void qc.invalidateQueries({ queryKey: qk.leaderboard() });
+    },
+  });
+}
+
+/** Conteste un match (RPC) + retire de la liste « à confirmer ». */
+export function useDisputeMatch(myId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (matchId: string) => disputeMatch(matchId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.pending(myId) });
+    },
+  });
 }

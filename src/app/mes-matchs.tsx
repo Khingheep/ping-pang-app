@@ -9,7 +9,7 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchRecentMatches, type MatchView } from '@/lib/matches/history';
 
-const TABS = ['Tous', 'Victoires', 'Défaites', 'WTT'];
+const TABS = ['Tous', 'Victoires', 'Défaites'];
 
 function matchDate(iso: string): string {
   return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
@@ -28,9 +28,7 @@ export default function MesMatchsScreen() {
   );
 
   const confirmed = matches.filter((m) => m.status === 'confirmed');
-  const filtered = confirmed.filter((m) =>
-    tab === 1 ? m.won : tab === 2 ? !m.won : tab === 3 ? m.format === 'WTT' : true,
-  );
+  const filtered = confirmed.filter((m) => (tab === 1 ? m.won : tab === 2 ? !m.won : true));
 
   return (
     <View style={styles.root}>

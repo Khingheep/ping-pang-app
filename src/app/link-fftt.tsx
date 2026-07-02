@@ -17,6 +17,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import {
+  backfillFfttClub,
   fetchFfttByLicence,
   linkFfttToProfile,
   searchFftt,
@@ -47,6 +48,8 @@ export default function LinkFfttScreen() {
       if (p?.fftt_id) {
         setLinked({ ffttId: p.fftt_id, points: p.fftt_points });
         fetchFfttByLicence(p.fftt_id).then(setDetail).catch(() => {});
+        // Comptes liés avant l'ajout de `fftt_club` : on remplit le club depuis le miroir local.
+        if (!p.fftt_club) backfillFfttClub(id, p.fftt_id).catch(() => {});
       } else {
         setLinked(null);
         setDetail(null);
@@ -105,7 +108,7 @@ export default function LinkFfttScreen() {
     try {
       setLinkingId(p.numberId);
       const pts = await linkFfttToProfile(id, p);
-      notify('FFTT lié ✅', `${p.prenom} ${p.nom} — ${pts ?? '—'} pts officiels`);
+      notify('FFTT lié ✅', `${p.prenom} ${p.nom} - ${pts ?? '-'} pts officiels`);
       router.back();
     } catch (e) {
       notify('FFTT', e instanceof Error ? e.message : 'Erreur.');
@@ -210,7 +213,7 @@ export default function LinkFfttScreen() {
                     {p.prenom} {p.nom}
                   </ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    {p.club?.nom ?? '—'}
+                    {p.club?.nom ?? '-'}
                     {p.classementOfficiel ? ` · ${p.classementOfficiel}` : ''}
                     {p.pointsOfficiels != null ? ` · ${p.pointsOfficiels} pts` : ''}
                   </ThemedText>
@@ -243,7 +246,7 @@ function Stat({ label, value }: { label: string; value: number | null }) {
   return (
     <View style={styles.stat}>
       <ThemedText type="cardTitle" themeColor="brand">
-        {value != null ? value : '—'}
+        {value != null ? value : '-'}
       </ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
         {label}

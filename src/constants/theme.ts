@@ -1,5 +1,5 @@
 /**
- * Tokens de design centralisés — SOURCE DE VÉRITÉ unique du style de l'app.
+ * Tokens de design centralisés - SOURCE DE VÉRITÉ unique du style de l'app.
  *
  * Aligné sur le Figma « Ping Pang Connect » (designer = source de vérité).
  * ⚠️ Le design réel est en MODE CLAIR (fond off-white, texte onyx), l'evergreen
@@ -13,15 +13,15 @@ import { Platform } from 'react-native';
 
 /** Palette brute (hex extraits du Figma). Passer par `Colors` dans les écrans. */
 export const Palette = {
-  evergreen: '#092C25', // brand #1 — headers, boutons primaires, nav active
+  evergreen: '#092C25', // brand #1 - headers, boutons primaires, nav active
   whitePP: '#F5F6F3', // fond app
   white: '#FFFFFF', // surfaces / cards
   onyx: '#101010', // texte principal
   grey: '#8C8C8C', // texte secondaire
   border: '#E0E0DE', // bordures fines
-  lime: '#E6FFA5', // accent data — highlight, succès doux, podium #1
-  blue: '#A5C6FF', // accent data — avatars, podium #2, chart
-  purple: '#A8A5FF', // accent data — avatars, podium #3
+  lime: '#E6FFA5', // accent data - highlight, succès doux, podium #1
+  blue: '#A5C6FF', // accent data - avatars, podium #2, chart
+  purple: '#A8A5FF', // accent data - avatars, podium #3
   green: '#8CE566', // succès / victoire
   red: '#FF8C8C', // défaite / erreur (fond)
   redInk: '#CC1A1A', // défaite / erreur (texte)

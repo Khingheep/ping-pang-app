@@ -69,15 +69,11 @@ begin
   values (lucas, wtest, lucas, '3-0', '11-7,11-8,11-9', 5, true, 9, -9,
           'seed-demo', 'confirmed', true, true, now() - interval '4 days');
 
-  -- ───── TEST1 (Walid Bouzidane) ─────
-  insert into matches (player_a, player_b, winner, score, set_scores, best_of, is_ranked,
-                       elo_delta_a, elo_delta_b, feeling, status, confirmed_by_a, confirmed_by_b, played_at)
-  values (test1, ana, test1, '3-2', '11-9,11-13,8-11,11-7,11-8', 5, true, 20, -20,
-          'seed-demo', 'confirmed', true, true, now() - interval '1 day');
-  insert into matches (player_a, player_b, winner, score, set_scores, best_of, is_ranked,
-                       elo_delta_a, elo_delta_b, feeling, status, confirmed_by_a, confirmed_by_b, played_at)
-  values (wei, test1, wei, '3-0', '11-5,11-7,11-9', 5, true, 7, -7,
-          'seed-demo', 'confirmed', true, true, now() - interval '6 days');
+  -- ───── TEST1 (Walid Bouzidane) : volontairement SANS matchs classés en dur ─────
+  -- On n'insère plus de matchs is_ranked=true avec des elo_delta écrits à la main sur les
+  -- comptes perso : ça décorrèle le rating réel (jamais mis à jour) du widget « 7 jours »
+  -- (qui somme ces deltas). Pour un match de démo qui bouge vraiment l'ELO, utiliser le vrai
+  -- flux propose_match -> confirm_match (cf. scripts/seed-matches.mjs).
 
   -- ───── Likes + commentaires (sur les matchs de walid, par l'adversaire) ─────
   insert into match_likes (match_id, player_id) values (m1, wei);

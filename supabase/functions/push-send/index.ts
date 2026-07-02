@@ -9,7 +9,14 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const EXPO_PUSH = 'https://exp.host/--/api/v2/push/send';
 
-type Notif = { id: string; player_id: string; title: string; body: string | null };
+type Notif = {
+  id: string;
+  player_id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  data: Record<string, unknown> | null;
+};
 
 Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -23,7 +30,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const base = supabase.from('notifications').select('id, player_id, title, body').eq('pushed', false);
+    const base = supabase.from('notifications').select('id, player_id, type, title, body, data').eq('pushed', false);
     const { data: notifs } = notificationId
       ? await base.eq('id', notificationId)
       : await base.order('created_at', { ascending: true }).limit(50);
@@ -47,6 +54,8 @@ Deno.serve(async (req) => {
         body: n.body ?? '',
         sound: 'default',
         priority: 'high',
+        // Deep-link au tap : l'app lit `data.type` + l'id d'entité (cf. usePushNavigation).
+        data: { type: n.type, ...(n.data ?? {}) },
       })),
     );
 

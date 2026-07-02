@@ -1,6 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 
-export type ChallengeFormat = 'wtt' | 'bo7' | 'bo5' | 'bo3' | 'champions';
+export type ChallengeFormat = 'bo7' | 'bo5' | 'bo3';
 
 export type Challenge = {
   id: string;
@@ -10,21 +13,21 @@ export type Challenge = {
   status: string;
   format: string | null;
   created_at: string;
-  from: { display_name: string } | null;
-  to: { display_name: string } | null;
+  from: { display_name: string; avatar_url: string | null } | null;
+  to: { display_name: string; avatar_url: string | null } | null;
 };
 
 /** Nombre de sets (best_of) associé à un format de défi. */
 export function bestOfForFormat(format: ChallengeFormat): number {
   if (format === 'bo3') return 3;
   if (format === 'bo5') return 5;
-  return 7; // bo7 | wtt | champions
+  return 7; // bo7
 }
 
 export type RecentOpponent = { id: string; name: string; elo: number; city: string | null; lastPlayed: string };
 
 const CHALLENGE_COLS =
-  'id, from_player, to_player, message, status, format, created_at, from:from_player(display_name), to:to_player(display_name)';
+  'id, from_player, to_player, message, status, format, created_at, from:from_player(display_name, avatar_url), to:to_player(display_name, avatar_url)';
 
 export async function fetchIncomingChallenges(myId: string): Promise<Challenge[]> {
   const { data } = await supabase
@@ -50,17 +53,58 @@ export async function fetchOutgoingChallenges(myId: string): Promise<Challenge[]
 export async function sendChallenge(
   fromId: string,
   toId: string,
-  format: ChallengeFormat = 'wtt',
+  format: ChallengeFormat = 'bo5',
   message?: string,
-): Promise<void> {
-  const { error } = await supabase
+): Promise<string> {
+  const { data, error } = await supabase
     .from('challenges')
-    .insert({ from_player: fromId, to_player: toId, format, message: message ?? null, status: 'sent' });
+    .insert({ from_player: fromId, to_player: toId, format, message: message ?? null, status: 'sent' })
+    .select('id')
+    .single();
   if (error) throw error;
+  return (data as { id: string }).id;
 }
 
 export async function respondChallenge(id: string, status: 'accepted' | 'declined'): Promise<void> {
   const { error } = await supabase.from('challenges').update({ status }).eq('id', id);
+  if (error) throw error;
+}
+
+/** Un défi accepté, prêt à jouer — vu du point de vue de l'utilisateur (adversaire résolu). */
+export type ActiveChallenge = Challenge & { opponentId: string; opponentName: string; opponentAvatar: string | null };
+
+/**
+ * Défis ACCEPTÉS qui me concernent (que je les aie envoyés OU reçus) → section « À jouer ».
+ * C'est ce qui manquait : après acceptation, un défi n'apparaissait plus côté receveur.
+ */
+export async function fetchActiveChallenges(myId: string): Promise<ActiveChallenge[]> {
+  const { data } = await supabase
+    .from('challenges')
+    .select(CHALLENGE_COLS)
+    .eq('status', 'accepted')
+    .or(`from_player.eq.${myId},to_player.eq.${myId}`)
+    .order('created_at', { ascending: false });
+  return ((data as unknown as Challenge[] | null) ?? []).map((c) => {
+    const iAmFrom = c.from_player === myId;
+    const opp = iAmFrom ? c.to : c.from;
+    return {
+      ...c,
+      opponentId: iAmFrom ? c.to_player : c.from_player,
+      opponentName: opp?.display_name ?? 'Joueur',
+      opponentAvatar: opp?.avatar_url ?? null,
+    };
+  });
+}
+
+/** Clôture un défi accepté (statut → `played`, lié au match) — appelable par les 2 joueurs (RPC). */
+export async function closeChallenge(challengeId: string, matchId?: string | null): Promise<void> {
+  const { error } = await supabase.rpc('close_challenge', { p_challenge: challengeId, p_match: matchId ?? null });
+  if (error) throw error;
+}
+
+/** Annule un défi que J'AI envoyé (RLS : seulement l'expéditeur, tant qu'il est « sent »). */
+export async function cancelChallenge(id: string): Promise<void> {
+  const { error } = await supabase.from('challenges').delete().eq('id', id);
   if (error) throw error;
 }
 
@@ -103,9 +147,56 @@ export async function challengePreview(opponentId: string): Promise<{ winDelta: 
 }
 
 export const FORMAT_INFO: Record<ChallengeFormat, { title: string; tag: string; detail: string }> = {
-  wtt: { title: 'WTT', tag: 'Format officiel', detail: 'Meilleur des 7 sets' },
-  bo7: { title: 'BO7', tag: 'Marathon', detail: 'Meilleur des 7 sets' },
   bo5: { title: 'BO5', tag: 'Classique', detail: 'Meilleur des 5 sets' },
   bo3: { title: 'BO3', tag: 'Rapide', detail: 'Meilleur des 3 sets' },
-  champions: { title: 'Champions League', tag: 'Spécial', detail: 'Format à élimination' },
+  bo7: { title: 'BO7', tag: 'Marathon', detail: 'Meilleur des 7 sets' },
 };
+
+/** Défis reçus (mis en cache). */
+export function useIncomingChallenges(myId: string | undefined) {
+  return useQuery({
+    queryKey: qk.challenges.incoming(myId ?? 'anon'),
+    queryFn: () => fetchIncomingChallenges(myId!),
+    enabled: !!myId,
+    staleTime: STALE.challenges,
+  });
+}
+
+/** Défis que j'ai envoyés (mis en cache). */
+export function useOutgoingChallenges(myId: string | undefined) {
+  return useQuery({
+    queryKey: qk.challenges.outgoing(myId ?? 'anon'),
+    queryFn: () => fetchOutgoingChallenges(myId!),
+    enabled: !!myId,
+    staleTime: STALE.challenges,
+  });
+}
+
+/** Défis acceptés, à jouer (mis en cache). */
+export function useActiveChallenges(myId: string | undefined) {
+  return useQuery({
+    queryKey: qk.challenges.active(myId ?? 'anon'),
+    queryFn: () => fetchActiveChallenges(myId!),
+    enabled: !!myId,
+    staleTime: STALE.challenges,
+  });
+}
+
+// Compteur process-wide pour des noms de canaux realtime uniques (cf. messages.ts).
+let channelSeq = 0;
+
+/**
+ * Abonnement realtime aux défis qui me concernent (reçus OU envoyés), tous événements.
+ * Deux filtres car postgres_changes n'en accepte qu'un par écouteur. `onChange` est appelé
+ * à chaque insert/update/delete → l'appelant rafraîchit ses listes (incoming + outgoing).
+ */
+export function subscribeChallenges(myId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`challenges-${myId}-${++channelSeq}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'challenges', filter: `to_player=eq.${myId}` }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'challenges', filter: `from_player=eq.${myId}` }, onChange)
+    .subscribe();
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}

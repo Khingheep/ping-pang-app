@@ -1,4 +1,7 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ImageManipulator from 'expo-image-manipulator';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 
 /** Nombre max de photos par séance. */
@@ -46,12 +49,20 @@ export type TrainingSession = {
 };
 
 export type StrokeStat = { stroke: string; min: number };
+
+/** Granularité du graphe d'activité : jours de la semaine, semaines du mois, mois de l'année. */
+export type ActivityPeriod = 'week' | 'month' | 'year';
+export type ActivityBucket = { label: string; min: number };
+
 export type TrainingStats = {
   totalMinYear: number;
   weekMin: number;
+  monthMin: number;
   count: number;
   byStroke: StrokeStat[];
   weekly: { label: string; min: number }[];
+  /** Séries pré-calculées pour le filtre Semaine / Mois / Année du graphe d'activité. */
+  activity: Record<ActivityPeriod, ActivityBucket[]>;
 };
 
 export async function addTrainingSession(p: {
@@ -309,11 +320,69 @@ export async function addSessionComment(sessionId: string, playerId: string, bod
 }
 
 export async function likeSession(sessionId: string, playerId: string): Promise<void> {
-  await supabase.from('session_likes').insert({ session_id: sessionId, player_id: playerId });
+  const { error } = await supabase.from('session_likes').insert({ session_id: sessionId, player_id: playerId });
+  if (error && error.code !== '23505') throw error; // 23505 = déjà liké → idempotent, pas une erreur
 }
 
 export async function unlikeSession(sessionId: string, playerId: string): Promise<void> {
-  await supabase.from('session_likes').delete().eq('session_id', sessionId).eq('player_id', playerId);
+  const { error } = await supabase.from('session_likes').delete().eq('session_id', sessionId).eq('player_id', playerId);
+  if (error) throw error;
+}
+
+/** Stats d'entraînement d'un joueur (mis en cache). */
+export function useTrainingStats(playerId: string | undefined) {
+  return useQuery({
+    queryKey: qk.training.stats(playerId ?? 'anon'),
+    queryFn: () => fetchTrainingStats(playerId!),
+    enabled: !!playerId,
+    staleTime: STALE.trainingStats,
+  });
+}
+
+/** Dernière séance d'un joueur (mis en cache), ou null. */
+export function useLastTrainingSession(playerId: string | undefined) {
+  return useQuery({
+    queryKey: qk.training.lastSession(playerId ?? 'anon'),
+    queryFn: async () => (await fetchTrainingSessions(playerId!, 1))[0] ?? null,
+    enabled: !!playerId,
+    staleTime: STALE.trainingStats,
+  });
+}
+
+/** Feed des séances (mis en cache). */
+export function useSessionsFeed(myId: string | undefined, limit = 40) {
+  return useQuery({
+    queryKey: qk.feed.sessions(myId ?? 'anon'),
+    queryFn: () => fetchSessionsFeed(myId, limit),
+    enabled: !!myId,
+    staleTime: STALE.feed,
+  });
+}
+
+/** Like/unlike optimiste d'une séance du feed : met à jour le cache, rollback en cas d'échec. */
+export function useToggleSessionLike(myId: string) {
+  const qc = useQueryClient();
+  const key = qk.feed.sessions(myId);
+  return useMutation({
+    mutationFn: async (item: SessionFeedItem) => {
+      const liked = !item.liked;
+      if (liked) await likeSession(item.id, myId);
+      else await unlikeSession(item.id, myId);
+      return liked;
+    },
+    onMutate: async (item) => {
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<SessionFeedItem[]>(key);
+      const liked = !item.liked;
+      qc.setQueryData<SessionFeedItem[]>(key, (old) =>
+        (old ?? []).map((s) => (s.id === item.id ? { ...s, liked, likeCount: s.likeCount + (liked ? 1 : -1) } : s)),
+      );
+      return { prev };
+    },
+    onError: (_e, _item, ctx) => {
+      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+    },
+  });
 }
 
 type Row = {
@@ -438,36 +507,95 @@ function startOfWeek(d: Date): Date {
   return x;
 }
 
+const DAY_MS = 86_400_000;
+const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+const MONTH_LABELS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+
 export async function fetchTrainingStats(playerId: string): Promise<TrainingStats> {
   const now = new Date();
-  const yearStart = new Date(now.getFullYear(), 0, 1).toISOString();
+  const yearStartDate = new Date(now.getFullYear(), 0, 1);
+
+  // Graphe historique « 8 dernières semaines » : il peut déborder sur l'an passé en début
+  // d'année, donc on lit depuis la plus ancienne borne nécessaire (et non gte 1er janvier).
+  const WEEKS = 8;
+  const oldestWeek = startOfWeek(now);
+  oldestWeek.setDate(oldestWeek.getDate() - (WEEKS - 1) * 7);
+  const fetchFrom = new Date(Math.min(yearStartDate.getTime(), oldestWeek.getTime()));
+
   const { data } = await supabase
     .from('training_sessions')
     .select('duration_min, strokes, created_at')
     .eq('player_id', playerId)
-    .gte('created_at', yearStart);
+    .gte('created_at', fetchFrom.toISOString());
   const rows = (data as { duration_min: number; strokes: string[] | null; created_at: string }[] | null) ?? [];
 
   const weekStart = startOfWeek(now).getTime();
-  const WEEKS = 8;
   const weekly = Array.from({ length: WEEKS }, (_, i) => {
     const ws = startOfWeek(now);
     ws.setDate(ws.getDate() - (WEEKS - 1 - i) * 7);
     return { start: ws.getTime(), label: `${ws.getDate()}/${ws.getMonth() + 1}`, min: 0 };
   });
 
+  // ── Séries du filtre Semaine / Mois / Année ──
+  // Semaine : 7 jours de la semaine en cours (lundi -> dimanche).
+  const week = Array.from({ length: 7 }, (_, i) => ({
+    start: weekStart + i * DAY_MS,
+    label: DAY_LABELS[i],
+    min: 0,
+  }));
+  const weekEnd = weekStart + 7 * DAY_MS;
+
+  // Mois : une barre par semaine du mois en cours (semaines qui chevauchent le mois).
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
+  const monthWeeks: { start: number; end: number; label: string; min: number }[] = [];
+  for (let ws = startOfWeek(new Date(monthStart)); ws.getTime() < monthEnd; ws.setDate(ws.getDate() + 7)) {
+    monthWeeks.push({
+      start: ws.getTime(),
+      end: ws.getTime() + 7 * DAY_MS,
+      label: `${ws.getDate()}/${ws.getMonth() + 1}`,
+      min: 0,
+    });
+  }
+
+  // Année : 12 mois de l'année civile en cours.
+  const months = MONTH_LABELS.map((label) => ({ label, min: 0 }));
+
   let totalMinYear = 0;
   let weekMin = 0;
+  let monthMin = 0;
+  let yearCount = 0;
   const strokeMap = new Map<string, number>();
 
   for (const r of rows) {
     const dur = r.duration_min ?? 0;
-    totalMinYear += dur;
-    const t = new Date(r.created_at).getTime();
+    const d = new Date(r.created_at);
+    const t = d.getTime();
+
+    if (d.getFullYear() === now.getFullYear()) {
+      totalMinYear += dur;
+      yearCount += 1;
+      months[d.getMonth()].min += dur;
+      const strokes = r.strokes && r.strokes.length ? r.strokes : ['Autre'];
+      const per = dur / strokes.length; // réparti équitablement -> la somme = total
+      for (const s of strokes) strokeMap.set(s, (strokeMap.get(s) ?? 0) + per);
+    }
+
     if (t >= weekStart) weekMin += dur;
-    const strokes = r.strokes && r.strokes.length ? r.strokes : ['Autre'];
-    const per = dur / strokes.length; // réparti équitablement -> la somme = total
-    for (const s of strokes) strokeMap.set(s, (strokeMap.get(s) ?? 0) + per);
+    if (t >= weekStart && t < weekEnd) {
+      week[Math.min(6, Math.floor((t - weekStart) / DAY_MS))].min += dur;
+    }
+
+    if (t >= monthStart && t < monthEnd) {
+      monthMin += dur;
+      for (const mw of monthWeeks) {
+        if (t >= mw.start && t < mw.end) {
+          mw.min += dur;
+          break;
+        }
+      }
+    }
+
     for (let i = weekly.length - 1; i >= 0; i--) {
       if (t >= weekly[i].start) {
         weekly[i].min += dur;
@@ -483,9 +611,15 @@ export async function fetchTrainingStats(playerId: string): Promise<TrainingStat
   return {
     totalMinYear,
     weekMin,
-    count: rows.length,
+    monthMin,
+    count: yearCount,
     byStroke,
     weekly: weekly.map((w) => ({ label: w.label, min: w.min })),
+    activity: {
+      week: week.map((w) => ({ label: w.label, min: w.min })),
+      month: monthWeeks.map((w) => ({ label: w.label, min: w.min })),
+      year: months,
+    },
   };
 }
 

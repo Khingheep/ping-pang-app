@@ -10,6 +10,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { proposeMatch } from '@/lib/matches/confirm';
 import { countSets, formatSetScores, validateMatch, type SetScore } from '@/lib/matches/sets';
+import { bestOfForFormat, closeChallenge, type ChallengeFormat } from '@/lib/social/challenges';
 import { notify } from '@/lib/ui/alert';
 
 const FEELINGS = ['💪', '🔥', '😅', '😐', '😩'];
@@ -28,9 +29,18 @@ function numericSets(sets: SetInput[]): SetScore[] {
 }
 
 export default function NewMatchScreen() {
-  const { opponentId, opponentName } = useLocalSearchParams<{ opponentId?: string; opponentName?: string }>();
-  const [sets, setSets] = useState<SetInput[]>(() => initialSets(5));
-  const [bestOf, setBestOf] = useState(5);
+  const { opponentId, opponentName, opponentAvatar, challengeId, format } = useLocalSearchParams<{
+    opponentId?: string;
+    opponentName?: string;
+    opponentAvatar?: string;
+    challengeId?: string;
+    format?: string;
+  }>();
+  // Depuis un défi : le format a été convenu à l'envoi → on le verrouille (pas de changement possible).
+  const lockedFmt = format === 'bo3' || format === 'bo5' || format === 'bo7' ? (format as ChallengeFormat) : null;
+  const lockedBestOf = lockedFmt ? bestOfForFormat(lockedFmt) : null;
+  const [sets, setSets] = useState<SetInput[]>(() => initialSets(lockedBestOf ?? 5));
+  const [bestOf, setBestOf] = useState(lockedBestOf ?? 5);
   const [feeling, setFeeling] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -52,6 +62,15 @@ export default function NewMatchScreen() {
       setBusy(true);
       const setScores = formatSetScores(numericSets(sets));
       const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling, setScores: setScores || null });
+      // Si on saisit depuis un défi accepté (section « À jouer ») : on le clôture (statut → played),
+      // best-effort → un échec de clôture ne doit pas masquer le succès de la proposition de match.
+      if (challengeId) {
+        try {
+          await closeChallenge(challengeId, r.match_id);
+        } catch {
+          /* le défi reste « à jouer » ; sans conséquence sur le match proposé */
+        }
+      }
       const sign = r.preview_delta > 0 ? '+' : '';
       notify(
         'Match envoyé 📨',
@@ -80,7 +99,7 @@ export default function NewMatchScreen() {
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {opponentName ? (
             <View style={styles.opp}>
-              <Avatar name={opponentName} size={56} />
+              <Avatar name={opponentName} size={56} uri={opponentAvatar || undefined} />
               <View>
                 <ThemedText type="small" themeColor="textSecondary">
                   Adversaire
@@ -101,7 +120,7 @@ export default function NewMatchScreen() {
               </ThemedText>
             </View>
             <ThemedText type="subtitle" themeColor="textMuted">
-              —
+              -
             </ThemedText>
             <View style={styles.scoreCol}>
               <ThemedText type="smallBold" themeColor="textSecondary" numberOfLines={1}>
@@ -116,21 +135,32 @@ export default function NewMatchScreen() {
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Format
           </ThemedText>
-          <View style={styles.pillRow}>
-            {BEST_OF.map((b) => (
-              <Pressable
-                key={b}
-                onPress={() => {
-                  setBestOf(b);
-                  setSets(initialSets(b));
-                }}
-                style={[styles.pill, bestOf === b ? styles.pillActive : styles.pillIdle]}>
-                <ThemedText type="smallBold" themeColor={bestOf === b ? 'onBrand' : 'text'}>
-                  Bo{b}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
+          {lockedBestOf ? (
+            // Format figé par le défi : on l'affiche en lecture seule (pas de changement possible).
+            <View style={styles.formatLocked}>
+              <Ionicons name="lock-closed" size={14} color={Palette.grey} />
+              <ThemedText type="smallBold">Bo{lockedBestOf}</ThemedText>
+              <ThemedText type="small" themeColor="textMuted">
+                défini par le défi
+              </ThemedText>
+            </View>
+          ) : (
+            <View style={styles.pillRow}>
+              {BEST_OF.map((b) => (
+                <Pressable
+                  key={b}
+                  onPress={() => {
+                    setBestOf(b);
+                    setSets(initialSets(b));
+                  }}
+                  style={[styles.pill, bestOf === b ? styles.pillActive : styles.pillIdle]}>
+                  <ThemedText type="smallBold" themeColor={bestOf === b ? 'onBrand' : 'text'}>
+                    Bo{b}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          )}
 
           <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
             Détail des manches
@@ -192,6 +222,18 @@ const styles = StyleSheet.create({
   pill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.sm, alignItems: 'center' },
   pillActive: { backgroundColor: Palette.evergreen },
   pillIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  formatLocked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
   feeling: {
     width: 56,
     height: 56,

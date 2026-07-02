@@ -32,15 +32,17 @@ import {
 } from '@/lib/fftt/link';
 import { useUserLocation } from '@/lib/location/use-location';
 import { uploadAvatar } from '@/lib/players/avatar';
-import { upsertOnboarding } from '@/lib/players/profile';
+import { setHomeVenue, upsertOnboarding } from '@/lib/players/profile';
 import { requestNotificationPermission } from '@/lib/push/register';
 import { choose, notify } from '@/lib/ui/alert';
+import { ClubSearch } from '@/components/club-search';
+import { matchVenueByName, type Venue } from '@/lib/venues/venues';
 
 // Cartes / champs sur fond blanc uni.
 const SURFACE = Palette.white;
 
-const STEP = { NAME: 0, TYPE: 1, INTERESTS: 2, EMAIL: 3, PHOTO: 4, PASSWORD: 5, FFTT: 6, PERMS: 7, DONE: 8 } as const;
-const DOTS = 8; // NAME..PERMS
+const STEP = { NAME: 0, TYPE: 1, INTERESTS: 2, EMAIL: 3, PHOTO: 4, PASSWORD: 5, FFTT: 6, CLUB: 7, PERMS: 8, DONE: 9 } as const;
+const DOTS = 9; // NAME..PERMS
 
 const PLAYER_TYPES = [
   { key: 'occasionnel', emoji: '🌴', title: 'Occasionnel', sub: 'Pour le plaisir, en vacances ou au bureau' },
@@ -111,7 +113,7 @@ export default function OnboardingScreen() {
   const [step, setStep] = useState<number>(STEP.NAME);
   const [busy, setBusy] = useState(false);
 
-  // Permissions (priming) — on ne déclenche la pop-up système que sur tap, jamais au montage.
+  // Permissions (priming) - on ne déclenche la pop-up système que sur tap, jamais au montage.
   const location = useUserLocation(false);
   const [notif, setNotif] = useState<PermStatus>('idle');
 
@@ -129,6 +131,7 @@ export default function OnboardingScreen() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [playerType, setPlayerType] = useState<string | null>(null);
   const [interests, setInterests] = useState<string[]>([]);
+  const [homeVenue, setHomeVenueState] = useState<Venue | null>(null);
 
   const [ffttResults, setFfttResults] = useState<FfttPlayer[]>([]);
   const [ffttSearching, setFfttSearching] = useState(false);
@@ -165,6 +168,14 @@ export default function OnboardingScreen() {
       return;
     }
     setFftt(p);
+    // Pré-remplit le club maison depuis la licence si on le retrouve dans nos lieux (sans écraser un choix manuel).
+    if (p.club?.nom) {
+      matchVenueByName(p.club.nom)
+        .then((v) => {
+          if (v) setHomeVenueState((cur) => cur ?? v);
+        })
+        .catch(() => {});
+    }
     if (ffttSeedPoints(p) != null) return;
     try {
       const d = await fetchFfttByLicence(p.numberId);
@@ -260,8 +271,10 @@ export default function OnboardingScreen() {
       case STEP.PHOTO:
         return setStep(STEP.PASSWORD);
       case STEP.PASSWORD:
-        return setStep(ffttDone && !ffttError && ffttResults.length === 0 ? STEP.PERMS : STEP.FFTT);
+        return setStep(ffttDone && !ffttError && ffttResults.length === 0 ? STEP.CLUB : STEP.FFTT);
       case STEP.FFTT:
+        return setStep(STEP.CLUB);
+      case STEP.CLUB:
         return setStep(STEP.PERMS);
       case STEP.PERMS:
         return setStep(STEP.DONE);
@@ -307,6 +320,7 @@ export default function OnboardingScreen() {
       };
       if (fftt) {
         patch.fftt_id = fftt.numberId;
+        patch.fftt_club = fftt.club?.nom ?? null;
         // Force temps réel (résout le détail si la ligne de recherche n'a pas de points).
         const pts = await resolveFfttPoints(fftt);
         patch.fftt_points = pts;
@@ -317,6 +331,8 @@ export default function OnboardingScreen() {
         }
       }
       await upsertOnboarding(uid, mail, patch);
+      // Club maison : écriture isolée (best-effort) pour ne jamais bloquer la création du compte.
+      if (homeVenue) await setHomeVenue(uid, homeVenue.id).catch(() => {});
       markOnboarded();
       router.replace('/');
     } catch (e) {
@@ -531,6 +547,23 @@ export default function OnboardingScreen() {
                   </Pressable>
                 </>
               )
+            )}
+
+            {/* ── Club / spot habituel ── */}
+            {step === STEP.CLUB && (
+              <>
+                <ThemedText type="title">Ton club ou ton spot ?</ThemedText>
+                <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
+                  Où joues-tu le plus souvent ? On l&apos;épinglera sur ta carte.
+                  {fftt ? ' On a pré-rempli depuis ta licence si on l’a trouvé.' : ''}
+                </ThemedText>
+                <ClubSearch selected={homeVenue} onSelect={setHomeVenueState} />
+                <Pressable onPress={() => setHomeVenueState(null)} style={styles.linkBtn}>
+                  <ThemedText type="smallBold" themeColor="textSecondary">
+                    Je n&apos;ai pas de club, je joue surtout dehors
+                  </ThemedText>
+                </Pressable>
+              </>
             )}
 
             {/* ── Autorisations (priming loc + notifs) ── */}

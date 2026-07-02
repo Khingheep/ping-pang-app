@@ -1,6 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
 import { type User } from '@supabase/supabase-js';
 
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
+import { fetchVenue, type Venue } from '@/lib/venues/venues';
 
 export type PlayerProfile = {
   id: string;
@@ -15,6 +18,7 @@ export type PlayerProfile = {
   player_type: string | null;
   fftt_id: string | null;
   fftt_points: number | null;
+  fftt_club: string | null;
   elo: number;
   glicko_rd: number | null; // incertitude Glicko-2 (RD élevé = classement provisoire)
   goal_elo: number | null; // objectif d'ELO fixé manuellement (null = aucun)
@@ -40,6 +44,7 @@ export type LeaderboardEntry = {
   id: string;
   handle: string;
   display_name: string;
+  avatar_url: string | null;
   city: string | null;
   country: string | null;
   elo: number;
@@ -48,7 +53,7 @@ export type LeaderboardEntry = {
   lng: number | null;
 };
 
-const LIST_COLS = 'id, handle, display_name, city, country, elo, level, lat, lng';
+const LIST_COLS = 'id, handle, display_name, avatar_url, city, country, elo, level, lat, lng';
 
 function handleFromUser(user: User): string {
   const base = (user.email?.split('@')[0] ?? 'joueur').toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -75,7 +80,7 @@ export async function fetchMyProfile(userId: string): Promise<PlayerProfile | nu
   const { data } = await supabase
     .from('players')
     .select(
-      'id, handle, display_name, avatar_url, bio, city, country, play_style, handedness, player_type, fftt_id, fftt_points, elo, glicko_rd, goal_elo, goal_start_elo, goal_deadline, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
+      'id, handle, display_name, avatar_url, bio, city, country, play_style, handedness, player_type, fftt_id, fftt_points, fftt_club, elo, glicko_rd, goal_elo, goal_start_elo, goal_deadline, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
     )
     .eq('id', userId)
     .maybeSingle();
@@ -98,6 +103,7 @@ export async function upsertOnboarding(
     interests?: string[];
     fftt_id?: string;
     fftt_points?: number | null;
+    fftt_club?: string | null;
     elo?: number;
     level?: string;
   },
@@ -117,6 +123,23 @@ export async function upsertOnboarding(
     const alt = `${base}-${userId.slice(0, 4)}`;
     ({ error } = await supabase.from('players').upsert(buildRow(alt), { onConflict: 'id' }));
   }
+  if (error) throw error;
+}
+
+/**
+ * Club « maison » du joueur (venue lié via home_venue_id). Lecture défensive : renvoie null
+ * sans planter si la colonne n'existe pas encore (migration 0047 non appliquée).
+ */
+export async function fetchHomeVenue(userId: string): Promise<Venue | null> {
+  const { data, error } = await supabase.from('players').select('home_venue_id').eq('id', userId).maybeSingle();
+  if (error) return null;
+  const vid = (data as { home_venue_id: string | null } | null)?.home_venue_id ?? null;
+  return vid ? fetchVenue(vid) : null;
+}
+
+/** Définit (ou retire) le club maison. Écriture isolée → ne casse aucun autre flux si elle échoue. */
+export async function setHomeVenue(userId: string, venueId: string | null): Promise<void> {
+  const { error } = await supabase.from('players').update({ home_venue_id: venueId }).eq('id', userId);
   if (error) throw error;
 }
 
@@ -146,6 +169,7 @@ export async function updateMyProfile(
     interests?: string[];
     fftt_id?: string;
     fftt_points?: number | null;
+    fftt_club?: string | null;
     elo?: number;
     level?: string;
     onboarded?: boolean;
@@ -175,6 +199,18 @@ export async function updateMyGoal(
     : { goal_elo: null, goal_start_elo: null, goal_deadline: null };
   const { error } = await supabase.from('players').update(patch).eq('id', userId);
   if (error) throw error;
+}
+
+/**
+ * Delta d'ELO du joueur courant sur `days` jours, calculé SERVEUR sur l'historique de rating
+ * (= elo actuel − elo il y a `days` jours). Fiable, contrairement à la somme des elo_delta des
+ * matchs qui peut diverger du rating réel (arrondis Glicko, lien FFTT, seed…). Renvoie 0 en cas
+ * d'erreur ou d'historique insuffisant.
+ */
+export async function fetchEloDelta(days = 7): Promise<number> {
+  const { data, error } = await supabase.rpc('elo_delta_since', { p_days: days });
+  if (error) return 0;
+  return (data as number | null) ?? 0;
 }
 
 /** Classement par ELO décroissant. */
@@ -223,4 +259,55 @@ export async function searchPlayers(myId: string, query: string, limit = 20): Pr
     .limit(limit);
   const rows = (data as { id: string; display_name: string | null; avatar_url: string | null }[] | null) ?? [];
   return rows.map((r) => ({ id: r.id, name: r.display_name ?? 'Joueur', avatarUrl: r.avatar_url }));
+}
+
+// ───────────────────────── Hooks react-query ─────────────────────────
+
+/** Profil joueur (mis en cache). Désactivé tant que l'id n'est pas connu. */
+export function useMyProfile(userId: string | undefined) {
+  return useQuery({
+    queryKey: qk.profile(userId ?? 'anon'),
+    queryFn: () => fetchMyProfile(userId!),
+    enabled: !!userId,
+    staleTime: STALE.profile,
+  });
+}
+
+/** Delta d'ELO sur `days` jours (mis en cache). Désactivé tant que l'id n'est pas connu. */
+export function useEloDelta(userId: string | undefined, days = 7) {
+  return useQuery({
+    queryKey: qk.eloDelta(userId ?? 'anon', days),
+    queryFn: () => fetchEloDelta(days),
+    enabled: !!userId,
+    staleTime: STALE.leaderboard,
+  });
+}
+
+/** Classement par ELO (mis en cache). */
+export function useLeaderboard(limit = 200) {
+  return useQuery({
+    queryKey: qk.leaderboard(),
+    queryFn: () => fetchLeaderboard(limit),
+    staleTime: STALE.leaderboard,
+  });
+}
+
+/** Autres joueurs pour les défis, hors soi-même (mis en cache). */
+export function useOtherPlayers(excludeId: string | undefined, limit = 100) {
+  return useQuery({
+    queryKey: qk.otherPlayers(excludeId ?? 'anon'),
+    queryFn: () => fetchOtherPlayers(excludeId!, limit),
+    enabled: !!excludeId,
+    staleTime: STALE.players,
+  });
+}
+
+/** Club « maison » du joueur (mis en cache). */
+export function useHomeVenue(userId: string | undefined) {
+  return useQuery({
+    queryKey: qk.venues.home(userId ?? 'anon'),
+    queryFn: () => fetchHomeVenue(userId!),
+    enabled: !!userId,
+    staleTime: STALE.venues,
+  });
 }

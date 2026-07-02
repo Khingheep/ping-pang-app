@@ -28,7 +28,7 @@ describe('nextElo', () => {
   });
 });
 
-describe('eloDeltas — somme nulle à ratings égaux', () => {
+describe('eloDeltas - somme nulle à ratings égaux', () => {
   it('a gagne : delta a positif, delta b négatif, opposés', () => {
     const d = eloDeltas(1500, 1500, 'a');
     expect(d.a).toBe(16);
@@ -36,7 +36,7 @@ describe('eloDeltas — somme nulle à ratings égaux', () => {
   });
 });
 
-describe('levelForElo — paliers', () => {
+describe('levelForElo - paliers', () => {
   it('mappe les seuils', () => {
     expect(levelForElo(0).key).toBe('rookie');
     expect(levelForElo(1099).key).toBe('rookie');
@@ -50,7 +50,7 @@ describe('levelForElo — paliers', () => {
   });
 });
 
-describe('ffttPointsToElo — bornes', () => {
+describe('ffttPointsToElo - bornes', () => {
   it('clampe entre 800 et 2600', () => {
     expect(ffttPointsToElo(0)).toBe(1000);
     expect(ffttPointsToElo(2000)).toBe(1500);

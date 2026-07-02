@@ -4,7 +4,7 @@
  * redirigé vers le détail du tournoi.
  *
  * Le nombre de poules n'est PAS demandé : il est calculé automatiquement au lancement
- * selon les inscrits réels (numPoulesForPlayers) — poules de 3 à 5 et bracket propre.
+ * selon les inscrits réels (numPoulesForPlayers) - poules de 3 à 5 et bracket propre.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -20,7 +20,7 @@ import { numPoulesForPlayers } from '@/lib/tournaments/bracket';
 import { createTournament, TOURNAMENT_FORMATS, type TournamentFormat } from '@/lib/tournaments/tournaments';
 import { notify } from '@/lib/ui/alert';
 
-// On ne garde que les formats réellement distincts (BO3/5/7) — WTT/Champions en étaient des doublons.
+// On ne garde que les formats réellement distincts (BO3/5/7) - WTT/Champions en étaient des doublons.
 const FORMATS: TournamentFormat[] = ['bo3', 'bo5', 'bo7'];
 const PLAYER_MIN = 4;
 const PLAYER_MAX = 64;
@@ -28,15 +28,15 @@ const PLAYER_STEP = 1;
 
 const clampSize = (n: number) => Math.min(PLAYER_MAX, Math.max(PLAYER_MIN, n));
 
-/** Aperçu de la structure : « 4 poules de 4 → quarts ». */
-function poulesPreview(n: number): string {
+const QUALIFIERS: number[] = [1, 2, 3];
+
+/** Aperçu de la structure : « 4 poules de 4 → 8 qualifiés ». */
+function poulesPreview(n: number, qualifiers: number): string {
   const p = numPoulesForPlayers(n);
   const per = Math.round(n / p);
   const poulesLbl = p === 1 ? '1 poule' : `${p} poules`;
-  const round0 = p; // matchs du 1er tour du bracket (2 qualifiés/poule)
-  const phase =
-    round0 <= 1 ? 'finale directe' : round0 === 2 ? 'demies' : round0 === 4 ? 'quarts' : round0 === 8 ? '8es' : `tableau à ${round0}`;
-  return `${poulesLbl} de ~${per} → ${phase}`;
+  const qualified = Math.min(qualifiers, per) * p;
+  return `${poulesLbl} de ~${per} → ${qualified} qualifiés`;
 }
 
 export default function NewTournamentScreen() {
@@ -44,6 +44,7 @@ export default function NewTournamentScreen() {
   const [name, setName] = useState('');
   const [size, setSize] = useState(8);
   const [format, setFormat] = useState<TournamentFormat>('bo5');
+  const [qualifiers, setQualifiers] = useState(2);
   const [ranked, setRanked] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editingSize, setEditingSize] = useState(false);
@@ -64,6 +65,7 @@ export default function NewTournamentScreen() {
         name: name.trim() || 'Mon tournoi',
         format,
         maxPlayers: size,
+        qualifiersPerPoule: qualifiers,
         isRanked: ranked,
       });
       router.replace({ pathname: '/tournoi', params: { id: t.id } });
@@ -141,7 +143,7 @@ export default function NewTournamentScreen() {
               {PLAYER_MIN}
             </ThemedText>
             <ThemedText type="small" themeColor="brand">
-              {poulesPreview(size)}
+              {poulesPreview(size, qualifiers)}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
               {PLAYER_MAX}
@@ -160,6 +162,22 @@ export default function NewTournamentScreen() {
               </Pressable>
             ))}
           </View>
+
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+            QUALIFIÉS PAR POULE
+          </ThemedText>
+          <View style={styles.chipWrap}>
+            {QUALIFIERS.map((q) => (
+              <Pressable key={q} onPress={() => setQualifiers(q)} style={[styles.chipWide, qualifiers === q ? styles.chipOn : styles.chipOff]}>
+                <ThemedText type="smallBold" themeColor={qualifiers === q ? 'onBrand' : 'text'}>
+                  {q === 1 ? '1er' : q === 2 ? 'Top 2' : 'Top 3'}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+          <ThemedText type="small" themeColor="textMuted" style={{ marginTop: Spacing.one }}>
+            Nombre de joueurs qui sortent de chaque poule vers le tableau final.
+          </ThemedText>
 
           <Pressable style={styles.rankedRow} onPress={() => setRanked((r) => !r)}>
             <View style={styles.rankedText}>

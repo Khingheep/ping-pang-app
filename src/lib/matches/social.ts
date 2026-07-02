@@ -15,11 +15,13 @@ export type MatchComment = {
 };
 
 export async function likeMatch(matchId: string, playerId: string): Promise<void> {
-  await supabase.from('match_likes').insert({ match_id: matchId, player_id: playerId });
+  const { error } = await supabase.from('match_likes').insert({ match_id: matchId, player_id: playerId });
+  if (error && error.code !== '23505') throw error; // 23505 = déjà liké → idempotent, pas une erreur
 }
 
 export async function unlikeMatch(matchId: string, playerId: string): Promise<void> {
-  await supabase.from('match_likes').delete().eq('match_id', matchId).eq('player_id', playerId);
+  const { error } = await supabase.from('match_likes').delete().eq('match_id', matchId).eq('player_id', playerId);
+  if (error) throw error;
 }
 
 /** Joueurs ayant aimé un match (les plus récents d'abord). */

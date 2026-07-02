@@ -1,5 +1,5 @@
 /**
- * Détail d'un tournoi (Événement) — piloté par l'id passé en param.
+ * Détail d'un tournoi (Événement) - piloté par l'id passé en param.
  *
  * États successifs :
  *   open    → liste des inscrits + code d'invitation ; l'organisateur lance le tournoi.
@@ -11,21 +11,27 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Fragment, useCallback, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { SetScoreEntry, type SetInput } from '@/components/set-score-entry';
+import { SwipeSheet } from '@/components/swipe-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { countSets, formatSetScores, parseSetScores, validateMatch, type SetScore } from '@/lib/matches/sets';
 import { fetchLeaderboard, type LeaderboardEntry } from '@/lib/players/profile';
-import { notify } from '@/lib/ui/alert';
+import { confirm, notify } from '@/lib/ui/alert';
 import {
   addPlayersToTournament,
+  computeFinalRanking,
+  computePlayerRecords,
   computePouleStandings,
   fetchTournamentDetail,
+  type FinalRankEntry,
+  forfeitPlayerInPoule,
+  recordTournamentForfeit,
   recordTournamentMatch,
   startTournament,
   TOURNAMENT_FORMATS,
@@ -54,11 +60,15 @@ export default function TournoiScreen() {
   const [detail, setDetail] = useState<TournamentDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [scoring, setScoring] = useState<TournamentMatch | null>(null);
+  const [matchDetail, setMatchDetail] = useState<TournamentMatch | null>(null);
   const [sets, setSets] = useState<SetInput[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
   const [candidates, setCandidates] = useState<LeaderboardEntry[]>([]);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [openPoules, setOpenPoules] = useState<Record<string, boolean>>({});
+  const [tab, setTab] = useState<'poules' | 'finale'>('poules');
+  const [showJourney, setShowJourney] = useState(false); // tournoi fini : révéler poules+tableau
 
   const load = useCallback(() => {
     if (id) fetchTournamentDetail(id).then(setDetail);
@@ -76,7 +86,17 @@ export default function TournoiScreen() {
 
   const { tournament, players, matches } = detail;
   const isOwner = tournament.owner_id === myId;
-  const nameOf = (pid: string | null) => players.find((p) => p.player_id === pid)?.name ?? '—';
+  const records = computePlayerRecords(matches); // bilan V/D global (vue Participants)
+  const nameOf = (pid: string | null) => players.find((p) => p.player_id === pid)?.name ?? '-';
+  const avatarOf = (pid: string | null) => players.find((p) => p.player_id === pid)?.avatar ?? null;
+  const goPlayer = (pid: string) => router.push({ pathname: '/player', params: { id: pid } });
+  // Tournoi terminé → on met le CLASSEMENT en avant et on masque poules/tableau (révélables au besoin).
+  const reviewOpen = tournament.status !== 'done' || showJourney;
+  // Tap sur un match (poule ou tableau) → détail lisible par TOUS ; la saisie du score y est
+  // proposée seulement à qui en a le droit (organisateur / joueurs du match).
+  const openDetail = (m: TournamentMatch) => {
+    if (m.player_a && m.player_b) setMatchDetail(m);
+  };
   // Qui peut saisir un score : l'organisateur (tous les matchs) ou un des 2 joueurs du match (le sien).
   const mayScore = (m: TournamentMatch) =>
     !!m.player_a && !!m.player_b && (isOwner || m.player_a === myId || m.player_b === myId);
@@ -147,6 +167,54 @@ export default function TournoiScreen() {
     }
   }
 
+  // Forfait sur le match en cours de saisie : le joueur `absentId` est déclaré forfait, l'autre gagne 3-0.
+  async function submitForfeit(absentId: string) {
+    if (!scoring) return;
+    const presentId = scoring.player_a === absentId ? scoring.player_b : scoring.player_a;
+    if (!presentId) return;
+    if (
+      !(await confirm({
+        title: 'Déclarer forfait ?',
+        message: `${nameOf(absentId)} est forfait : ${nameOf(presentId)} gagne le match 3-0.`,
+        confirmText: 'Forfait',
+        destructive: true,
+      }))
+    )
+      return;
+    try {
+      setBusy(true);
+      await recordTournamentForfeit(tournament.id, scoring, presentId, bestOf);
+      setScoring(null);
+      load();
+    } catch (e) {
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Joueur absent : forfait sur TOUS ses matchs de poule restants (chaque adversaire gagne 3-0).
+  async function forfeitWholePoule(playerId: string) {
+    if (
+      !(await confirm({
+        title: 'Joueur absent ?',
+        message: `${nameOf(playerId)} est déclaré forfait pour tous ses matchs de poule restants.`,
+        confirmText: 'Déclarer forfait',
+        destructive: true,
+      }))
+    )
+      return;
+    try {
+      setBusy(true);
+      await forfeitPlayerInPoule(detail!, playerId, bestOf);
+      load();
+    } catch (e) {
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function shareCode() {
     Share.share({ message: `Rejoins mon tournoi « ${tournament.name} » sur Ping Pang : code ${tournament.code}` }).catch(() => {});
   }
@@ -154,8 +222,14 @@ export default function TournoiScreen() {
   const poules = [...new Set(players.map((p) => p.poule).filter((x): x is string => !!x))].sort();
   const bracketMatches = matches.filter((m) => m.phase === 'bracket');
   const bracketRounds = [...new Set(bracketMatches.map((m) => m.round ?? 0))].sort((a, b) => a - b);
-  const finalMatch = bracketMatches.find((m) => (m.round ?? 0) === Math.max(0, ...bracketRounds) && bracketRounds.length);
-  const champion = tournament.status === 'done' && finalMatch?.winner ? nameOf(finalMatch.winner) : null;
+  // Classement final (podium + liste), calculé seulement quand le tournoi est terminé.
+  const ranking = tournament.status === 'done' ? computeFinalRanking(players, matches) : [];
+
+  // Poules et phase finale sur des « pages » distinctes (onglets) pour ne pas tout mélanger.
+  const hasBracket = bracketRounds.length > 0;
+  const hasPoulesView = poules.length > 0 && tournament.status !== 'open';
+  const showTabs = hasBracket && hasPoulesView;
+  const activeTab: 'poules' | 'finale' = showTabs ? tab : hasBracket ? 'finale' : 'poules';
 
   return (
     <View style={styles.root}>
@@ -167,46 +241,98 @@ export default function TournoiScreen() {
           <ThemedText type="cardTitle" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>
             {tournament.name}
           </ThemedText>
+          <Pressable onPress={() => setParticipantsOpen(true)} hitSlop={12}>
+            <Ionicons name="people-outline" size={23} color={Palette.onyx} />
+          </Pressable>
           <Pressable onPress={shareCode} hitSlop={12}>
             <Ionicons name="share-outline" size={22} color={Palette.onyx} />
           </Pressable>
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {/* Bandeau code + format */}
-          <Pressable style={styles.codeCard} onPress={shareCode}>
-            <View>
-              <ThemedText type="small" style={{ color: Palette.lime }}>
-                CODE D’INVITATION
-              </ThemedText>
-              <ThemedText type="title" themeColor="onBrand" style={styles.codeText}>
-                {tournament.code}
-              </ThemedText>
-            </View>
-            <View style={styles.codeMeta}>
-              <ThemedText type="smallBold" themeColor="onBrand">
+          {/* Bandeau code d'invitation — UNIQUEMENT en phase inscriptions (une fois lancé, plus
+              personne ne rejoint → le code ne sert à rien). Ensuite : bandeau compact format/joueurs. */}
+          {tournament.status === 'open' ? (
+            <Pressable style={styles.codeCard} onPress={shareCode}>
+              <View>
+                <ThemedText type="small" style={{ color: Palette.lime }}>
+                  CODE D’INVITATION
+                </ThemedText>
+                <ThemedText type="title" themeColor="onBrand" style={styles.codeText}>
+                  {tournament.code}
+                </ThemedText>
+              </View>
+              <View style={styles.codeMeta}>
+                <ThemedText type="smallBold" themeColor="onBrand">
+                  {TOURNAMENT_FORMATS[tournament.format]?.label ?? tournament.format}
+                </ThemedText>
+                <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.8 }}>
+                  {players.length}/{tournament.max_players} joueurs
+                </ThemedText>
+                {tournament.is_ranked ? (
+                  <ThemedText type="small" style={{ color: Palette.lime }}>
+                    Classé
+                  </ThemedText>
+                ) : null}
+              </View>
+            </Pressable>
+          ) : (
+            <View style={styles.metaStrip}>
+              <ThemedText type="smallBold" themeColor="brand">
                 {TOURNAMENT_FORMATS[tournament.format]?.label ?? tournament.format}
               </ThemedText>
-              <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.8 }}>
-                {players.length}/{tournament.max_players} joueurs
+              <ThemedText type="small" themeColor="textSecondary">
+                · {players.length} joueurs{tournament.is_ranked ? ' · Classé' : ''}
               </ThemedText>
-              {tournament.is_ranked ? (
-                <ThemedText type="small" style={{ color: Palette.lime }}>
-                  Classé
-                </ThemedText>
-              ) : null}
             </View>
-          </Pressable>
+          )}
 
-          <PhaseStepper status={tournament.status} hasPoules={poules.length > 0} />
+          {/* Fil d'étapes uniquement quand il n'y a PAS d'onglets (sinon doublon avec Poules/Phase finale). */}
+          {!showTabs ? <PhaseStepper status={tournament.status} hasPoules={poules.length > 0} /> : null}
 
-          {champion ? (
-            <View style={styles.championCard}>
-              <ThemedText type="label" themeColor="textSecondary">
-                🏆 VAINQUEUR
+          {/* Tournoi terminé → classement final : podium (top 3) + reste du classement. */}
+          {tournament.status === 'done' && ranking.length ? (
+            <View style={styles.classement}>
+              <ThemedText type="label" themeColor="textSecondary" style={styles.classementTitle}>
+                🏆 CLASSEMENT FINAL
               </ThemedText>
-              <Avatar name={champion} size={72} color={Palette.lime} />
-              <ThemedText type="title">{champion}</ThemedText>
+              <Podium top3={ranking.slice(0, 3)} avatarOf={avatarOf} onPlayer={goPlayer} />
+              {ranking.length > 3 ? (
+                <View style={styles.rankList}>
+                  {ranking.slice(3).map((r) => (
+                    <Pressable key={r.playerId} style={styles.rankRow} onPress={() => goPlayer(r.playerId)}>
+                      <ThemedText type="cardTitle" themeColor="textMuted" style={styles.rankNum}>
+                        {r.place}
+                      </ThemedText>
+                      <Avatar name={r.name} uri={avatarOf(r.playerId)} size={34} />
+                      <ThemedText type="cardTitle" numberOfLines={1} style={{ flex: 1 }}>
+                        {r.name}
+                      </ThemedText>
+                      <Ionicons name="chevron-forward" size={16} color={Palette.grey} />
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Le parcours (poules + tableau) est masqué par défaut une fois le tournoi fini. */}
+              <Pressable style={styles.reviewToggle} onPress={() => setShowJourney((v) => !v)} hitSlop={6}>
+                <ThemedText type="smallBold" themeColor="brand">
+                  {showJourney ? 'Masquer le parcours' : 'Revoir le parcours (poules & tableau)'}
+                </ThemedText>
+                <Ionicons name={showJourney ? 'chevron-up' : 'chevron-down'} size={16} color={Palette.evergreen} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Qui saisit les scores : rappel du modèle de droits (orga = tout, joueur = ses matchs). */}
+          {tournament.status === 'poules' || tournament.status === 'bracket' ? (
+            <View style={styles.permHint}>
+              <Ionicons name={isOwner ? 'shield-checkmark' : 'information-circle-outline'} size={16} color={Palette.evergreen} />
+              <ThemedText type="small" themeColor="textSecondary" style={{ flex: 1 }}>
+                {isOwner
+                  ? 'Organisateur : tu peux saisir le score de tous les matchs.'
+                  : 'Tu peux saisir le score de tes propres matchs ; l’organisateur gère les autres.'}
+              </ThemedText>
             </View>
           ) : null}
 
@@ -229,7 +355,7 @@ export default function TournoiScreen() {
               <View style={styles.list}>
                 {players.map((p) => (
                   <View key={p.player_id} style={styles.row}>
-                    <Avatar name={p.name} size={40} />
+                    <Avatar name={p.name} size={40} uri={p.avatar} />
                     <ThemedText type="cardTitle" style={{ flex: 1 }} numberOfLines={1}>
                       {p.name} {p.player_id === tournament.owner_id ? '· organisateur' : ''}
                     </ThemedText>
@@ -255,40 +381,126 @@ export default function TournoiScreen() {
             </>
           ) : null}
 
+          {/* Onglets Poules / Phase finale (une fois le tableau final généré). */}
+          {showTabs && reviewOpen ? (
+            <View style={styles.tabs}>
+              {(['poules', 'finale'] as const).map((t) => {
+                const on = activeTab === t;
+                return (
+                  <Pressable key={t} onPress={() => setTab(t)} style={[styles.tab, on && styles.tabOn]}>
+                    <ThemedText type="smallBold" themeColor={on ? 'onBrand' : 'textSecondary'}>
+                      {t === 'poules' ? 'Poules' : 'Phase finale'}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+
           {/* ───────── Poules ───────── */}
-          {tournament.status === 'poules' || (tournament.status === 'bracket' && poules.length) ? (
+          {hasPoulesView && activeTab === 'poules' && reviewOpen ? (
             <>
-              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Poules
-              </ThemedText>
+              {!showTabs ? (
+                <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                  Poules
+                </ThemedText>
+              ) : null}
               {poules.map((poule) => {
                 const standings = computePouleStandings(players, matches, poule);
-                const pouleMatches = matches.filter((m) => m.phase === 'poule' && m.poule === poule);
+                const pouleMatches = matches
+                  .filter((m) => m.phase === 'poule' && m.poule === poule)
+                  .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+                // Les 2 premiers ne sont « Qualifiés » qu'une fois la poule terminée (ou en phase finale) :
+                // tant qu'aucun match n'est joué, le classement n'est que l'ordre des têtes de série.
+                const pouleDone = pouleMatches.length > 0 && pouleMatches.every((m) => m.winner);
+                const decided = tournament.status === 'bracket' || pouleDone;
+                const nQual = tournament.qualifiers_per_poule ?? 2;
                 return (
                   <View key={poule} style={styles.pouleCard}>
-                    <ThemedText type="cardTitle" style={styles.pouleTitle}>
-                      Poule {poule}
-                    </ThemedText>
-                    {standings.map((s, i) => (
-                      <View key={s.playerId} style={[styles.standRow, i < 2 && styles.standRowQ]}>
-                        <ThemedText type="smallBold" themeColor={i < 2 ? 'brand' : 'textSecondary'} style={styles.standRank}>
+                    <View style={styles.pouleTitleRow}>
+                      <ThemedText type="cardTitle">Poule {poule}</ThemedText>
+                      {!decided ? (
+                        <ThemedText type="small" themeColor="textMuted">
+                          {nQual === 1 ? '1er qualifié' : `Top ${nQual} qualifiés`}
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                    {/* En-tête de colonnes du classement. */}
+                    <View style={styles.standHead}>
+                      <ThemedText type="small" themeColor="textMuted" style={styles.standRank}>
+                        #
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted" style={{ flex: 1 }}>
+                        Joueur
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted" style={styles.statCell}>
+                        J
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted" style={styles.statCell}>
+                        V
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted" style={styles.statCell}>
+                        D
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted" style={styles.setCell}>
+                        Sets
+                      </ThemedText>
+                      {isOwner && tournament.status === 'poules' ? <View style={styles.forfeitIcon} /> : null}
+                    </View>
+                    {standings.map((s, i) => {
+                      const qualified = decided && i < nQual;
+                      const setDiff = s.setsWon - s.setsLost;
+                      const hasPending =
+                        tournament.status === 'poules' &&
+                        pouleMatches.some((m) => !m.winner && (m.player_a === s.playerId || m.player_b === s.playerId));
+                      return (
+                      <View key={s.playerId} style={[styles.standRow, qualified && styles.standRowQ]}>
+                        <ThemedText type="smallBold" themeColor={qualified ? 'brand' : 'textSecondary'} style={styles.standRank}>
                           {i + 1}
                         </ThemedText>
-                        <ThemedText type="default" style={{ flex: 1 }} numberOfLines={1}>
-                          {s.name}
+                        <View style={styles.standName}>
+                          <ThemedText type="default" numberOfLines={1} style={styles.standNameText}>
+                            {s.name}
+                          </ThemedText>
+                          {qualified ? (
+                            <View style={styles.qBadge}>
+                              <ThemedText type="small" themeColor="brand">
+                                Qualifié
+                              </ThemedText>
+                            </View>
+                          ) : null}
+                        </View>
+                        <ThemedText type="small" themeColor="textMuted" style={styles.statCell}>
+                          {s.played}
                         </ThemedText>
-                        {i < 2 ? (
-                          <View style={styles.qBadge}>
-                            <ThemedText type="small" themeColor="brand">
-                              Qualifié
+                        <ThemedText type="smallBold" themeColor={qualified ? 'brand' : 'text'} style={styles.statCell}>
+                          {s.wins}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.statCell}>
+                          {s.losses}
+                        </ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.setCell}>
+                          {s.setsWon}-{s.setsLost}
+                          {s.played > 0 ? (
+                            <ThemedText type="small" themeColor="textMuted">
+                              {' '}
+                              ({setDiff >= 0 ? '+' : ''}
+                              {setDiff})
                             </ThemedText>
-                          </View>
-                        ) : null}
-                        <ThemedText type="smallBold" themeColor="textSecondary">
-                          {s.wins}V {s.losses}D
+                          ) : null}
                         </ThemedText>
+                        {isOwner && tournament.status === 'poules' ? (
+                          hasPending ? (
+                            <Pressable onPress={() => forfeitWholePoule(s.playerId)} hitSlop={8} style={styles.forfeitIcon}>
+                              <Ionicons name="person-remove-outline" size={15} color={Palette.grey} />
+                            </Pressable>
+                          ) : (
+                            <View style={styles.forfeitIcon} />
+                          )
+                        ) : null}
                       </View>
-                    ))}
+                      );
+                    })}
 
                     {tournament.status === 'poules' && pouleMatches.length ? (
                       <>
@@ -310,7 +522,7 @@ export default function TournoiScreen() {
                         {openPoules[poule] ? (
                           <View style={styles.pouleMatches}>
                             {pouleMatches.map((m) => (
-                              <MatchRow key={m.id} m={m} nameOf={nameOf} onOpen={openScore} canScore={mayScore(m)} />
+                              <MatchRow key={m.id} m={m} nameOf={nameOf} onOpen={openDetail} canScore={mayScore(m)} />
                             ))}
                           </View>
                         ) : null}
@@ -323,117 +535,267 @@ export default function TournoiScreen() {
           ) : null}
 
           {/* ───────── Bracket (les « branches » qui apparaissent à la fin des poules) ───────── */}
-          {bracketRounds.length ? (
+          {hasBracket && activeTab === 'finale' && reviewOpen ? (
             <>
               <View style={styles.section}>
-                <ThemedText type="sectionTitle" themeColor="textSecondary">
-                  Phase finale
-                </ThemedText>
+                {!showTabs ? (
+                  <ThemedText type="sectionTitle" themeColor="textSecondary">
+                    Phase finale
+                  </ThemedText>
+                ) : null}
                 <ThemedText type="small" themeColor="textMuted">
-                  Tableau à élimination directe — glisse pour voir tous les tours.
+                  Tableau à élimination directe - glisse pour voir tous les tours.
                 </ThemedText>
               </View>
               <BracketTree
                 rounds={bracketRounds}
                 matches={bracketMatches}
                 nameOf={nameOf}
-                onOpen={openScore}
+                onOpen={openDetail}
                 canScore={mayScore}
               />
             </>
           ) : null}
         </ScrollView>
 
-        <Modal visible={!!scoring} transparent animationType="slide" onRequestClose={() => setScoring(null)}>
-          <View style={styles.modalRoot}>
-            <View style={styles.modalCard}>
-              <View style={styles.modalHead}>
-                <ThemedText type="cardTitle">Score du match</ThemedText>
-                <Pressable onPress={() => setScoring(null)} hitSlop={10}>
-                  <Ionicons name="close" size={24} color={Palette.onyx} />
-                </Pressable>
-              </View>
-              {scoring ? (
-                <>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.modalSub}>
-                    {nameOf(scoring.player_a)} vs {nameOf(scoring.player_b)}
-                  </ThemedText>
-                  <SetScoreEntry
-                    value={sets}
-                    onChange={setSets}
-                    bestOf={bestOf}
-                    meLabel={nameOf(scoring.player_a)}
-                    oppLabel={nameOf(scoring.player_b)}
-                  />
-                  <Pressable style={[styles.cta, busy && { opacity: 0.6 }]} disabled={busy} onPress={submitScore}>
-                    {busy ? (
-                      <ActivityIndicator color={Palette.whitePP} />
-                    ) : (
-                      <ThemedText type="cardTitle" themeColor="onBrand">
-                        Valider le score
-                      </ThemedText>
-                    )}
-                  </Pressable>
-                </>
-              ) : null}
-            </View>
+        <SwipeSheet visible={!!scoring} onClose={() => setScoring(null)} style={styles.modalCard}>
+          <View style={styles.modalHead}>
+            <ThemedText type="cardTitle">Score du match</ThemedText>
+            <Pressable onPress={() => setScoring(null)} hitSlop={10}>
+              <Ionicons name="close" size={24} color={Palette.onyx} />
+            </Pressable>
           </View>
-        </Modal>
-
-        {/* Ajouter des joueurs (organisateur) */}
-        <Modal visible={addOpen} transparent animationType="slide" onRequestClose={() => setAddOpen(false)}>
-          <View style={styles.modalRoot}>
-            <View style={[styles.modalCard, styles.addCard]}>
-              <View style={styles.modalHead}>
-                <ThemedText type="cardTitle">Ajouter des joueurs</ThemedText>
-                <Pressable onPress={() => setAddOpen(false)} hitSlop={10}>
-                  <Ionicons name="close" size={24} color={Palette.onyx} />
-                </Pressable>
-              </View>
-              <ScrollView style={styles.addList} keyboardShouldPersistTaps="handled">
-                {candidates.length === 0 ? (
-                  <ThemedText type="default" themeColor="textSecondary" style={{ paddingVertical: Spacing.three }}>
-                    Aucun autre joueur à ajouter.
-                  </ThemedText>
-                ) : (
-                  candidates.map((c) => {
-                    const on = !!picked[c.id];
-                    const full = players.length + Object.values(picked).filter(Boolean).length >= tournament.max_players;
-                    return (
-                      <Pressable
-                        key={c.id}
-                        disabled={!on && full}
-                        onPress={() => setPicked((s) => ({ ...s, [c.id]: !s[c.id] }))}
-                        style={[styles.addRow, (!on && full) && { opacity: 0.4 }]}>
-                        <Avatar name={c.display_name} size={36} />
-                        <ThemedText type="cardTitle" style={{ flex: 1 }} numberOfLines={1}>
-                          {c.display_name}
-                        </ThemedText>
-                        <ThemedText type="smallBold" themeColor="textSecondary">
-                          {c.elo}
-                        </ThemedText>
-                        <Ionicons
-                          name={on ? 'checkmark-circle' : 'ellipse-outline'}
-                          size={22}
-                          color={on ? Palette.evergreen : Palette.border}
-                        />
-                      </Pressable>
-                    );
-                  })
-                )}
-              </ScrollView>
-              <Pressable style={[styles.cta, busy && { opacity: 0.6 }]} disabled={busy} onPress={confirmAddPlayers}>
+          {scoring ? (
+            <>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.modalSub}>
+                {nameOf(scoring.player_a)} vs {nameOf(scoring.player_b)}
+              </ThemedText>
+              <SetScoreEntry
+                value={sets}
+                onChange={setSets}
+                bestOf={bestOf}
+                meLabel={nameOf(scoring.player_a)}
+                oppLabel={nameOf(scoring.player_b)}
+              />
+              <Pressable style={[styles.cta, busy && { opacity: 0.6 }]} disabled={busy} onPress={submitScore}>
                 {busy ? (
                   <ActivityIndicator color={Palette.whitePP} />
                 ) : (
                   <ThemedText type="cardTitle" themeColor="onBrand">
-                    Ajouter ({Object.values(picked).filter(Boolean).length})
+                    Valider le score
                   </ThemedText>
                 )}
               </Pressable>
-            </View>
+              {/* Forfait (bouton destructif rouge) : l'organisateur peut déclarer forfait l'un OU
+                  l'autre joueur ; un joueur ne peut déclarer QUE lui-même forfait (l'autre gagne 3-0). */}
+              <View style={styles.forfeitRow}>
+                {[scoring.player_a, scoring.player_b]
+                  .filter((pid): pid is string => !!pid && (isOwner || pid === myId))
+                  .map((pid) => (
+                    <Pressable key={pid} disabled={busy} style={styles.forfeitBtn} onPress={() => submitForfeit(pid)}>
+                      <Ionicons name="flag-outline" size={14} color={Palette.redInk} />
+                      <ThemedText type="smallBold" style={styles.forfeitText}>
+                        {pid === myId ? 'Me déclarer forfait' : `Forfait ${nameOf(pid)}`}
+                      </ThemedText>
+                    </Pressable>
+                  ))}
+              </View>
+            </>
+          ) : null}
+        </SwipeSheet>
+
+        {/* Détail d'un match : lisible par TOUS ; le bouton de saisie n'apparaît que si autorisé. */}
+        <SwipeSheet visible={!!matchDetail} onClose={() => setMatchDetail(null)} style={styles.modalCard}>
+          {matchDetail ? (
+            <>
+              <View style={styles.modalHead}>
+                <ThemedText type="cardTitle">Détail du match</ThemedText>
+                <Pressable onPress={() => setMatchDetail(null)} hitSlop={10}>
+                  <Ionicons name="close" size={24} color={Palette.onyx} />
+                </Pressable>
+              </View>
+              <ThemedText type="small" themeColor="textMuted" style={styles.modalSub}>
+                {matchDetail.phase === 'poule'
+                  ? `Poule ${matchDetail.poule}`
+                  : roundName(matchDetail.round ?? 0, Math.max(1, bracketRounds.length))}{' '}
+                · Bo{bestOf}
+              </ThemedText>
+
+              {[matchDetail.player_a, matchDetail.player_b].map((pid, i) => {
+                const isWinner = !!matchDetail.winner && matchDetail.winner === pid;
+                const setsWon = (matchDetail.score ?? '0-0').split('-');
+                return (
+                  <View key={i} style={[styles.detailPlayer, isWinner && styles.detailPlayerWin]}>
+                    <Avatar name={nameOf(pid)} uri={avatarOf(pid)} size={40} />
+                    <ThemedText type="cardTitle" numberOfLines={1} themeColor={isWinner ? 'brand' : 'text'} style={{ flex: 1 }}>
+                      {nameOf(pid)}
+                    </ThemedText>
+                    {isWinner ? <Ionicons name="trophy" size={16} color={Palette.evergreen} /> : null}
+                    {matchDetail.winner ? (
+                      <ThemedText type="subtitle" themeColor={isWinner ? 'brand' : 'textMuted'}>
+                        {setsWon[i] ?? '0'}
+                      </ThemedText>
+                    ) : null}
+                  </View>
+                );
+              })}
+
+              <View style={styles.detailSets}>
+                {(() => {
+                  const detailSets = parseSetScores(matchDetail.set_scores);
+                  return detailSets.length ? (
+                    <>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Manches
+                      </ThemedText>
+                      <ThemedText type="cardTitle">{detailSets.map((s) => `${s.a}-${s.b}`).join('   ')}</ThemedText>
+                    </>
+                  ) : (
+                    <ThemedText type="small" themeColor="textMuted">
+                      Match pas encore joué.
+                    </ThemedText>
+                  );
+                })()}
+              </View>
+
+              {mayScore(matchDetail) ? (
+                <Pressable
+                  style={styles.cta}
+                  onPress={() => {
+                    const m = matchDetail;
+                    setMatchDetail(null);
+                    openScore(m);
+                  }}>
+                  <ThemedText type="cardTitle" themeColor="onBrand">
+                    {matchDetail.winner ? 'Modifier le score' : 'Saisir le score'}
+                  </ThemedText>
+                </Pressable>
+              ) : null}
+            </>
+          ) : null}
+        </SwipeSheet>
+
+        {/* Ajouter des joueurs (organisateur) */}
+        <SwipeSheet visible={addOpen} onClose={() => setAddOpen(false)} style={[styles.modalCard, styles.addCard]}>
+          <View style={styles.modalHead}>
+            <ThemedText type="cardTitle">Ajouter des joueurs</ThemedText>
+            <Pressable onPress={() => setAddOpen(false)} hitSlop={10}>
+              <Ionicons name="close" size={24} color={Palette.onyx} />
+            </Pressable>
           </View>
-        </Modal>
+          <ScrollView style={styles.addList} keyboardShouldPersistTaps="handled">
+            {candidates.length === 0 ? (
+              <ThemedText type="default" themeColor="textSecondary" style={{ paddingVertical: Spacing.three }}>
+                Aucun autre joueur à ajouter.
+              </ThemedText>
+            ) : (
+              candidates.map((c) => {
+                const on = !!picked[c.id];
+                const full = players.length + Object.values(picked).filter(Boolean).length >= tournament.max_players;
+                return (
+                  <Pressable
+                    key={c.id}
+                    disabled={!on && full}
+                    onPress={() => setPicked((s) => ({ ...s, [c.id]: !s[c.id] }))}
+                    style={[styles.addRow, (!on && full) && { opacity: 0.4 }]}>
+                    <Avatar name={c.display_name} size={36} />
+                    <ThemedText type="cardTitle" style={{ flex: 1 }} numberOfLines={1}>
+                      {c.display_name}
+                    </ThemedText>
+                    <ThemedText type="smallBold" themeColor="textSecondary">
+                      {c.elo}
+                    </ThemedText>
+                    <Ionicons
+                      name={on ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={22}
+                      color={on ? Palette.evergreen : Palette.border}
+                    />
+                  </Pressable>
+                );
+              })
+            )}
+          </ScrollView>
+          <Pressable style={[styles.cta, busy && { opacity: 0.6 }]} disabled={busy} onPress={confirmAddPlayers}>
+            {busy ? (
+              <ActivityIndicator color={Palette.whitePP} />
+            ) : (
+              <ThemedText type="cardTitle" themeColor="onBrand">
+                Ajouter ({Object.values(picked).filter(Boolean).length})
+              </ThemedText>
+            )}
+          </Pressable>
+        </SwipeSheet>
+
+        {/* Vue Participants : roster complet (rang, club, classement, poule, bilan V/D). */}
+        <SwipeSheet visible={participantsOpen} onClose={() => setParticipantsOpen(false)} style={[styles.modalCard, styles.addCard]}>
+          <View style={styles.modalHead}>
+            <ThemedText type="cardTitle">Participants ({players.length})</ThemedText>
+            <Pressable onPress={() => setParticipantsOpen(false)} hitSlop={10}>
+              <Ionicons name="close" size={24} color={Palette.onyx} />
+            </Pressable>
+          </View>
+          <ScrollView style={styles.addList} showsVerticalScrollIndicator={false}>
+            {players.map((p, i) => {
+              const rec = records.get(p.player_id);
+              const isOrga = p.player_id === tournament.owner_id;
+              return (
+                <Pressable
+                  key={p.player_id}
+                  style={styles.partRow}
+                  onPress={() => {
+                    setParticipantsOpen(false);
+                    router.push({ pathname: '/player', params: { id: p.player_id } });
+                  }}>
+                  <ThemedText type="smallBold" themeColor="textMuted" style={styles.partRank}>
+                    {p.seed ?? i + 1}
+                  </ThemedText>
+                  <Avatar name={p.name} size={40} uri={p.avatar} />
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.partNameRow}>
+                      <ThemedText type="cardTitle" numberOfLines={1} style={{ flexShrink: 1 }}>
+                        {p.name}
+                      </ThemedText>
+                      {isOrga ? (
+                        <View style={styles.orgaBadge}>
+                          <Ionicons name="shield-checkmark" size={11} color={Palette.evergreen} />
+                          <ThemedText type="small" themeColor="brand">
+                            Orga
+                          </ThemedText>
+                        </View>
+                      ) : null}
+                      {p.poule ? (
+                        <View style={styles.poulePill}>
+                          <ThemedText type="small" themeColor="textSecondary">
+                            Poule {p.poule}
+                          </ThemedText>
+                        </View>
+                      ) : null}
+                    </View>
+                    <ThemedText type="small" themeColor="textMuted" numberOfLines={1}>
+                      {p.club ? `${p.club} · ` : ''}
+                      {p.ranking != null ? `${p.ranking} pts FFTT` : `ELO ${p.elo}`}
+                    </ThemedText>
+                  </View>
+                  {rec && rec.played > 0 ? (
+                    <View style={styles.partRecord}>
+                      <ThemedText type="smallBold" themeColor="brand">
+                        {rec.wins}V
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textMuted">
+                        {rec.losses}D
+                      </ThemedText>
+                    </View>
+                  ) : (
+                    <ThemedText type="small" themeColor="textMuted">
+                      —
+                    </ThemedText>
+                  )}
+                  <Ionicons name="chevron-forward" size={16} color={Palette.grey} />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </SwipeSheet>
       </SafeAreaView>
     </View>
   );
@@ -456,7 +818,7 @@ function MatchRow({
   const setsWon = (m.score ?? '0-0').split('-');
   const detail = parseSetScores(m.set_scores);
   return (
-    <Pressable disabled={!canScore} onPress={() => onOpen(m)} style={styles.matchCard}>
+    <Pressable disabled={!hasBoth} onPress={() => onOpen(m)} style={styles.matchCard}>
       {[m.player_a, m.player_b].map((pid, i) => {
         const isWinner = decided && m.winner === pid;
         return (
@@ -493,6 +855,43 @@ function MatchRow({
         )}
       </View>
     </Pressable>
+  );
+}
+
+/** Podium du classement final : 2e à gauche, 1er au centre (plus haut), 3e à droite. Tap → profil. */
+function Podium({
+  top3,
+  avatarOf,
+  onPlayer,
+}: {
+  top3: FinalRankEntry[];
+  avatarOf: (id: string | null) => string | null;
+  onPlayer: (id: string) => void;
+}) {
+  const [first, second, third] = top3;
+  const col = (e: FinalRankEntry | undefined, place: number, h: number, color: string) => (
+    <Pressable key={place} style={styles.podCol} disabled={!e} onPress={() => e && onPlayer(e.playerId)}>
+      {e ? (
+        <>
+          <Avatar name={e.name} uri={avatarOf(e.playerId)} size={place === 1 ? 60 : 48} color={color} />
+          <ThemedText type="smallBold" numberOfLines={1} style={styles.podName}>
+            {e.name}
+          </ThemedText>
+          <View style={[styles.podBar, { height: h, backgroundColor: color }]}>
+            <ThemedText type="title" style={styles.podPlace}>
+              {place}
+            </ThemedText>
+          </View>
+        </>
+      ) : null}
+    </Pressable>
+  );
+  return (
+    <View style={styles.podium}>
+      {col(second, 2, 56, Palette.blue)}
+      {col(first, 1, 88, Palette.lime)}
+      {col(third, 3, 40, Palette.purple)}
+    </View>
   );
 }
 
@@ -658,7 +1057,7 @@ function BracketCard({
   const live = canScore && !decided;
   const setsWon = (m.score ?? '0-0').split('-');
   return (
-    <Pressable disabled={!canScore} onPress={() => onOpen(m)} style={[styles.bCard, live && styles.bCardLive]}>
+    <Pressable disabled={!m.player_a || !m.player_b} onPress={() => onOpen(m)} style={[styles.bCard, live && styles.bCardLive]}>
       {[m.player_a, m.player_b].map((pid, i) => {
         const isWinner = decided && m.winner === pid;
         const empty = !pid;
@@ -709,7 +1108,29 @@ const styles = StyleSheet.create({
   codeText: { letterSpacing: 4, marginTop: Spacing.half },
   codeMeta: { alignItems: 'flex-end', gap: Spacing.half },
 
-  championCard: { alignItems: 'center', gap: Spacing.two, marginTop: Spacing.four, paddingVertical: Spacing.four },
+  metaStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.one, marginTop: Spacing.two },
+
+  // Classement final + podium
+  classement: { marginTop: Spacing.four, gap: Spacing.three },
+  classementTitle: { textAlign: 'center' },
+  podium: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: Spacing.two },
+  podCol: { alignItems: 'center', gap: Spacing.one, width: 100 },
+  podName: { textAlign: 'center', maxWidth: 96 },
+  podBar: { width: 74, borderTopLeftRadius: Radius.sm, borderTopRightRadius: Radius.sm, alignItems: 'center', justifyContent: 'center', paddingTop: Spacing.two },
+  podPlace: { color: Palette.evergreen },
+  rankList: { gap: Spacing.two },
+  rankRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
+  rankNum: { width: 22, textAlign: 'center' },
+  reviewToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.one, marginTop: Spacing.two },
 
   section: { marginTop: Spacing.four, marginBottom: Spacing.two, gap: Spacing.half },
 
@@ -750,6 +1171,42 @@ const styles = StyleSheet.create({
   addCard: { maxHeight: '80%' },
   addList: { maxHeight: 380 },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.two },
+
+  // Rappel du modèle de droits (saisie des scores).
+  permHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.three,
+    padding: Spacing.three,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+  },
+
+  // Vue Participants
+  partRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.two },
+  partRank: { width: 20, textAlign: 'center' },
+  partNameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  orgaBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: Palette.lime,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+  },
+  poulePill: {
+    backgroundColor: Palette.whitePP,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+  },
+  partRecord: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.one },
   list: { gap: Spacing.two },
   row: {
     flexDirection: 'row',
@@ -771,11 +1228,56 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     marginBottom: Spacing.two,
   },
-  pouleTitle: { marginBottom: Spacing.two },
+  pouleTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.two },
+  standHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.one,
+    paddingBottom: Spacing.one,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Palette.border,
+    marginBottom: Spacing.half,
+  },
   standRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.one, paddingHorizontal: Spacing.one, borderRadius: Radius.xs },
   standRowQ: { backgroundColor: 'rgba(230,255,165,0.45)' },
-  standRank: { width: 18 },
+  standRank: { width: 18, textAlign: 'center' },
+  standName: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minWidth: 0 },
+  standNameText: { flexShrink: 1 },
+  statCell: { width: 22, textAlign: 'center' },
+  setCell: { width: 64, textAlign: 'right' },
+  forfeitIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
+  forfeitRow: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.three, marginTop: Spacing.four },
+  forfeitBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.xs,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.red,
+    backgroundColor: 'rgba(255,140,140,0.12)',
+  },
+  forfeitText: { color: Palette.redInk },
+
+  // Onglets Poules / Phase finale
+  tabs: {
+    flexDirection: 'row',
+    gap: Spacing.one,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.pill,
+    padding: Spacing.half,
+    marginTop: Spacing.four,
+  },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: Spacing.two, borderRadius: Radius.pill },
+  tabOn: { backgroundColor: Palette.evergreen },
   qBadge: {
+    flexShrink: 0,
     backgroundColor: Palette.lime,
     borderRadius: Radius.pill,
     paddingHorizontal: Spacing.two,
@@ -830,16 +1332,21 @@ const styles = StyleSheet.create({
     borderTopColor: Palette.border,
     backgroundColor: Palette.whitePP,
   },
-  modalRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(16,16,16,0.45)' },
-  modalCard: {
-    backgroundColor: Palette.whitePP,
-    borderTopLeftRadius: Radius.lg,
-    borderTopRightRadius: Radius.lg,
-    padding: Spacing.four,
-    gap: Spacing.two,
-  },
+  modalCard: { paddingHorizontal: Spacing.four, gap: Spacing.two },
   modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   modalSub: { marginBottom: Spacing.three },
+  detailPlayer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
+  detailPlayerWin: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
+  detailSets: { alignItems: 'center', gap: Spacing.one, marginTop: Spacing.three },
   cta: {
     marginTop: Spacing.four,
     height: 54,

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,15 +10,18 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { levelForElo } from '@/lib/elo';
-import { fetchFfttCommonOpponents, type FfttHeadToHead } from '@/lib/fftt/link';
-import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
+import { useFfttCommonOpponents } from '@/lib/fftt/link';
+import { usePlayerMatches } from '@/lib/matches/history';
+import { useMyProfile } from '@/lib/players/profile';
+import { qk } from '@/lib/query/keys';
 import {
   acceptFriendRequest,
-  getFriendStatus,
   removeFriend,
   sendFriendRequest,
+  useFriendStatus,
   type FriendStatus,
 } from '@/lib/social/friends';
+import { formatDuration, useLastTrainingSession, useTrainingStats } from '@/lib/training/sessions';
 import { notify } from '@/lib/ui/alert';
 
 const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
@@ -26,6 +30,9 @@ const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; l
   pending_in: { icon: 'checkmark-circle', label: 'Accepter la demande' },
   friends: { icon: 'people', label: 'Amis ✓' },
 };
+
+/** Hauteur du mini-graphe d'activité hebdo (px). */
+const MINI_CHART_H = 56;
 
 /** Bilan victoires/défaites compact d'une liste de matchs : "2V-1D". */
 function winLoss(games: { victoire: boolean }[]): string {
@@ -37,49 +44,48 @@ export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { session } = useAuth();
   const myId = session?.user?.id;
-  const [p, setP] = useState<PlayerProfile | null>(null);
-  const [myFfttId, setMyFfttId] = useState<string | null>(null);
-  const [common, setCommon] = useState<FfttHeadToHead[]>([]);
-  const [friend, setFriend] = useState<FriendStatus>('none');
+  const qc = useQueryClient();
   const [friendBusy, setFriendBusy] = useState(false);
 
-  useEffect(() => {
-    if (id) fetchMyProfile(id).then(setP);
-  }, [id]);
+  // L'écran sert aussi à voir SON propre profil : on ne charge les sections « autre joueur »
+  // que si l'id consulté n'est pas le mien.
+  const otherId = id && id !== myId ? id : undefined;
 
-  useEffect(() => {
-    if (myId && id !== myId) fetchMyProfile(myId).then((me) => setMyFfttId(me?.fftt_id ?? null));
-  }, [myId, id]);
+  // Toutes ces requêtes partent EN PARALLÈLE (react-query) → plus de waterfalling séquentiel.
+  const profileQ = useMyProfile(id); // joueur consulté (clé partagée ['profile', id])
+  const myProfileQ = useMyProfile(myId); // moi, pour mon n° FFTT (cache partagé avec les autres écrans)
+  const matchesQ = usePlayerMatches(otherId, 5);
+  const trainingQ = useTrainingStats(otherId);
+  const lastSessionQ = useLastTrainingSession(otherId);
+  const friendQ = useFriendStatus(myId, otherId);
 
-  useEffect(() => {
-    if (id && myId && id !== myId) getFriendStatus(myId, id).then(setFriend);
-  }, [id, myId]);
+  const p = profileQ.data ?? null;
+  const myFfttId = myProfileQ.data?.fftt_id ?? null;
+  // Dependent query native : ne part que si les deux licences existent et diffèrent.
+  const commonQ = useFfttCommonOpponents(myFfttId, p?.fftt_id);
 
-  // Adversaires communs FFTT : si les deux joueurs ont une licence liée.
-  useEffect(() => {
-    const theirFftt = p?.fftt_id;
-    if (myFfttId && theirFftt && myFfttId !== theirFftt) {
-      fetchFfttCommonOpponents(myFfttId, theirFftt).then(setCommon).catch(() => {});
-    } else {
-      setCommon([]);
-    }
-  }, [myFfttId, p?.fftt_id]);
+  const matches = matchesQ.data ?? [];
+  const training = trainingQ.data ?? null;
+  const lastSession = lastSessionQ.data ?? null;
+  const common = commonQ.data ?? [];
+  const friend = friendQ.data ?? 'none';
 
   async function onFriend() {
     if (!myId || !p) return;
+    const key = qk.friends.status(myId, p.id);
+    const prev = friend;
+    let next: FriendStatus = prev;
+    if (prev === 'none') next = 'pending_out';
+    else if (prev === 'pending_in') next = 'friends';
+    else if (prev === 'friends' || prev === 'pending_out') next = 'none';
     try {
       setFriendBusy(true);
-      if (friend === 'none') {
-        await sendFriendRequest(myId, p.id);
-        setFriend('pending_out');
-      } else if (friend === 'pending_in') {
-        await acceptFriendRequest(myId, p.id);
-        setFriend('friends');
-      } else if (friend === 'friends' || friend === 'pending_out') {
-        await removeFriend(myId, p.id);
-        setFriend('none');
-      }
+      qc.setQueryData<FriendStatus>(key, next); // maj optimiste du cache
+      if (prev === 'none') await sendFriendRequest(myId, p.id);
+      else if (prev === 'pending_in') await acceptFriendRequest(myId, p.id);
+      else if (prev === 'friends' || prev === 'pending_out') await removeFriend(myId, p.id);
     } catch (e) {
+      qc.setQueryData<FriendStatus>(key, prev); // rollback en cas d'échec
       notify('Erreur', e instanceof Error ? e.message : 'Réessaie.');
     } finally {
       setFriendBusy(false);
@@ -89,6 +95,7 @@ export default function PlayerScreen() {
   const isMe = id === session?.user?.id;
   const elo = p?.elo ?? 0;
   const level = levelForElo(elo);
+  const maxWeek = Math.max(1, ...(training?.weekly ?? []).map((w) => w.min));
 
   return (
     <View style={styles.root}>
@@ -105,8 +112,16 @@ export default function PlayerScreen() {
           <View style={styles.hero}>
             <Avatar name={p?.display_name ?? '?'} size={96} uri={p?.avatar_url} />
             <ThemedText type="title" style={styles.name}>
-              {p?.display_name ?? '—'}
+              {p?.display_name ?? '-'}
             </ThemedText>
+            {p?.fftt_club ? (
+              <View style={styles.heroMetaItem}>
+                <Ionicons name="ribbon-outline" size={15} color={Palette.evergreen} />
+                <ThemedText type="default" themeColor="textSecondary" numberOfLines={1}>
+                  {p.fftt_club}
+                </ThemedText>
+              </View>
+            ) : null}
             {p?.city ? (
               <ThemedText type="default" themeColor="textSecondary">
                 {p.city}
@@ -130,24 +145,9 @@ export default function PlayerScreen() {
             </View>
           </View>
 
-          {p?.play_style || p?.handedness ? (
-            <View style={styles.infoRow}>
-              {p?.play_style ? (
-                <View style={styles.infoCard}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Style
-                  </ThemedText>
-                  <ThemedText type="cardTitle">{p.play_style}</ThemedText>
-                </View>
-              ) : null}
-              {p?.handedness ? (
-                <View style={styles.infoCard}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Main
-                  </ThemedText>
-                  <ThemedText type="cardTitle">{p.handedness}</ThemedText>
-                </View>
-              ) : null}
+          {p?.bio ? (
+            <View style={styles.bioCard}>
+              <ThemedText type="default">{p.bio}</ThemedText>
             </View>
           ) : null}
 
@@ -180,36 +180,121 @@ export default function PlayerScreen() {
               <Pressable
                 style={styles.defier}
                 onPress={() =>
-                  router.push({ pathname: '/new-match', params: { opponentId: p.id, opponentName: p.display_name } })
+                  router.push({
+                    pathname: '/challenge',
+                    params: {
+                      opponentId: p.id,
+                      opponentName: p.display_name,
+                      opponentElo: String(p.elo),
+                      opponentCity: p.city ?? '',
+                    },
+                  })
                 }>
+                <Ionicons name="flash" size={20} color={Palette.whitePP} />
                 <ThemedText type="cardTitle" themeColor="onBrand">
-                  Défier (saisir un match)
+                  Défier
                 </ThemedText>
               </Pressable>
-              <View style={styles.actionRow}>
+              <Pressable
+                style={styles.messageBtn}
+                onPress={() => router.push({ pathname: '/chat', params: { id: p.id, name: p.display_name } })}>
+                <Ionicons name="chatbubble-outline" size={18} color={Palette.onyx} />
+                <ThemedText type="smallBold">Message</ThemedText>
+              </Pressable>
+
+              {p.stats_visible !== false && matches.length ? (
+                <View style={styles.sectionCard}>
+                  <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.sectionTitle}>
+                    Derniers matchs
+                  </ThemedText>
+                  {matches.map((m) => (
+                    <Pressable
+                      key={m.id}
+                      style={styles.matchRow}
+                      onPress={() => router.push({ pathname: '/match', params: { id: m.id } })}>
+                      <ThemedText type="smallBold" style={styles.matchName} numberOfLines={1}>
+                        {m.opponent}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor={m.won ? 'brand' : 'textSecondary'}>
+                        {m.score}
+                      </ThemedText>
+                      {m.ranked ? (
+                        <ThemedText type="smallBold" themeColor={m.delta >= 0 ? 'brand' : 'textMuted'} style={styles.matchDelta}>
+                          {m.delta >= 0 ? `+${m.delta}` : m.delta}
+                        </ThemedText>
+                      ) : (
+                        <ThemedText type="small" themeColor="textMuted" style={styles.matchDelta}>
+                          amical
+                        </ThemedText>
+                      )}
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+
+              {p.stats_visible !== false && training && training.count > 0 ? (
+                <View style={styles.sectionCard}>
+                  <View style={styles.trainHead}>
+                    <ThemedText type="sectionTitle" themeColor="textSecondary">
+                      Entraînement
+                    </ThemedText>
+                    {training.weekMin > 0 ? (
+                      <View style={styles.weekTag}>
+                        <ThemedText type="smallBold" themeColor="brand">
+                          +{formatDuration(training.weekMin)} cette semaine
+                        </ThemedText>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={styles.miniChart}>
+                    {training.weekly.map((w, i) => (
+                      <View key={i} style={styles.chartCol}>
+                        <View style={styles.barWrap}>
+                          <View
+                            style={{
+                              width: '60%',
+                              height: Math.max(3, (w.min / maxWeek) * MINI_CHART_H),
+                              backgroundColor: w.min > 0 ? Palette.purple : Palette.border,
+                              borderRadius: 3,
+                            }}
+                          />
+                        </View>
+                        <ThemedText type="small" themeColor="textMuted" style={styles.chartLbl}>
+                          {w.label}
+                        </ThemedText>
+                      </View>
+                    ))}
+                  </View>
+                  <ThemedText type="small" themeColor="textMuted">
+                    {formatDuration(training.totalMinYear)} au total · {training.count} séances cette année
+                  </ThemedText>
+                </View>
+              ) : null}
+
+              {p.stats_visible !== false && lastSession ? (
                 <Pressable
-                  style={styles.actionBtn}
-                  onPress={() => router.push({ pathname: '/chat', params: { id: p.id, name: p.display_name } })}>
-                  <Ionicons name="chatbubble-outline" size={18} color={Palette.onyx} />
-                  <ThemedText type="smallBold">Message</ThemedText>
+                  style={styles.sessionCard}
+                  onPress={() => router.push({ pathname: '/session', params: { id: lastSession.id } })}>
+                  <View style={styles.sessionHead}>
+                    <Ionicons name="fitness-outline" size={16} color={Palette.purple} />
+                    <ThemedText type="sectionTitle" themeColor="textSecondary">
+                      Dernière séance
+                    </ThemedText>
+                    <View style={styles.flexFill} />
+                    <ThemedText type="small" themeColor="textMuted">
+                      {new Date(lastSession.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                    </ThemedText>
+                  </View>
+                  <ThemedText type="cardTitle">
+                    {formatDuration(lastSession.duration_min)}
+                    {lastSession.feeling ? ` · ${lastSession.feeling}` : ''}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                    {lastSession.strokes.length ? lastSession.strokes.join(', ') : 'Séance'}
+                    {lastSession.venue ? ` · ${lastSession.venue.name}` : ''}
+                  </ThemedText>
                 </Pressable>
-                <Pressable
-                  style={styles.actionBtn}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/challenge',
-                      params: {
-                        opponentId: p.id,
-                        opponentName: p.display_name,
-                        opponentElo: String(p.elo),
-                        opponentCity: p.city ?? '',
-                      },
-                    })
-                  }>
-                  <Ionicons name="flash-outline" size={18} color={Palette.onyx} />
-                  <ThemedText type="smallBold">Défier</ThemedText>
-                </Pressable>
-              </View>
+              ) : null}
 
               {common.length ? (
                 <View style={styles.h2hCard}>
@@ -252,6 +337,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.three },
   hero: { alignItems: 'center', gap: Spacing.two, marginTop: Spacing.three },
   name: { marginTop: Spacing.two },
+  heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half, maxWidth: '90%' },
   eloCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -264,15 +350,12 @@ const styles = StyleSheet.create({
   },
   eloCol: { alignItems: 'flex-start' },
   tag: { backgroundColor: Palette.lime, borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
-  infoRow: { flexDirection: 'row', gap: Spacing.two },
-  infoCard: {
-    flex: 1,
+  bioCard: {
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
     borderRadius: Radius.sm,
-    padding: Spacing.three,
-    gap: Spacing.half,
+    padding: Spacing.four,
   },
   friendBtn: {
     flexDirection: 'row',
@@ -292,8 +375,21 @@ const styles = StyleSheet.create({
     height: 54,
     borderRadius: Radius.sm,
     backgroundColor: Palette.evergreen,
+    flexDirection: 'row',
+    gap: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  messageBtn: {
+    height: 50,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
   },
   h2hCard: {
     marginTop: Spacing.two,
@@ -307,17 +403,39 @@ const styles = StyleSheet.create({
   h2hTitle: { marginBottom: Spacing.one },
   h2hRow: { flexDirection: 'row', alignItems: 'center' },
   h2hName: { flex: 1 },
-  actionRow: { flexDirection: 'row', gap: Spacing.two },
-  actionBtn: {
-    flex: 1,
-    height: 50,
-    borderRadius: Radius.sm,
+  sectionCard: {
+    marginTop: Spacing.two,
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: Radius.sm,
+    padding: Spacing.four,
     gap: Spacing.two,
   },
+  sectionTitle: { marginBottom: Spacing.one },
+  matchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  matchName: { flex: 1 },
+  matchDelta: { minWidth: 48, textAlign: 'right' },
+  trainHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  weekTag: {
+    backgroundColor: Palette.lime,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.half,
+  },
+  miniChart: { flexDirection: 'row', alignItems: 'flex-end', height: MINI_CHART_H + 18, gap: Spacing.one },
+  chartCol: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
+  barWrap: { height: MINI_CHART_H, justifyContent: 'flex-end', width: '100%', alignItems: 'center' },
+  chartLbl: { marginTop: Spacing.one, fontSize: 9 },
+  sessionCard: {
+    marginTop: Spacing.two,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.four,
+    gap: Spacing.one,
+  },
+  sessionHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  flexFill: { flex: 1 },
 });

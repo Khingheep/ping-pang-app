@@ -2,12 +2,15 @@ import { loadAsync, useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { focusManager, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Palette } from '@/constants/theme';
 import { AuthProvider, isSupabaseConfigured, useAuth } from '@/lib/auth/auth-provider';
+import { queryClient } from '@/lib/query/client';
+import { usePushNavigation } from '@/lib/push/use-push-navigation';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -15,6 +18,8 @@ function RootNavigator() {
   const { session, loading, needsOnboarding } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  usePushNavigation();
 
   useEffect(() => {
     if (loading) return;
@@ -85,6 +90,16 @@ export default function RootLayout() {
     loadAsync({ ionicons: '/ionicons.ttf' }).finally(() => setIconsReady(true));
   }, []);
 
+  // Natif : rafraîchit react-query quand l'app revient au premier plan (les queries périmées
+  // se refetchent). Sur web, refetchOnWindowFocus gère déjà le focus de fenêtre.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = AppState.addEventListener('change', (status) => {
+      focusManager.setFocused(status === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+
   // Gate tolérant : une erreur de police ne doit jamais laisser l'app en page blanche.
   const ready = (loaded || !!fontError) && iconsReady;
   useEffect(() => {
@@ -98,9 +113,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: Palette.whitePP }}>
       <StatusBar style="dark" />
-      <AuthProvider>
-        <RootNavigator />
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <RootNavigator />
+        </AuthProvider>
+      </QueryClientProvider>
     </GestureHandlerRootView>
   );
 }

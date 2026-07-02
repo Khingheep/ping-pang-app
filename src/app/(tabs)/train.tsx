@@ -13,6 +13,7 @@ import {
   fetchTrainingStats,
   formatDuration,
   formatHours,
+  type ActivityPeriod,
   type SessionTemplate,
   type TrainingSession,
   type TrainingStats,
@@ -21,11 +22,18 @@ import {
 const STROKE_COLORS = [Palette.purple, Palette.blue, Palette.lime, Palette.evergreen, Palette.green, Palette.grey];
 const CHART_H = 90;
 
+const PERIODS: { key: ActivityPeriod; label: string }[] = [
+  { key: 'week', label: 'Semaine' },
+  { key: 'month', label: 'Mois' },
+  { key: 'year', label: 'Année' },
+];
+
 export default function TrainScreen() {
   const { session } = useAuth();
   const [stats, setStats] = useState<TrainingStats | null>(null);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
+  const [period, setPeriod] = useState<ActivityPeriod>('week');
 
   const load = useCallback(() => {
     const id = session?.user?.id;
@@ -39,7 +47,12 @@ export default function TrainScreen() {
   useFocusEffect(load);
 
   const maxStroke = Math.max(1, ...(stats?.byStroke ?? []).map((s) => s.min));
-  const maxWeek = Math.max(1, ...(stats?.weekly ?? []).map((w) => w.min));
+
+  // Graphe d'activité filtrable : la série + le total dépendent de la période choisie.
+  const activitySeries = stats?.activity[period] ?? [];
+  const maxBar = Math.max(1, ...activitySeries.map((b) => b.min));
+  const periodMin = period === 'week' ? stats?.weekMin : period === 'month' ? stats?.monthMin : stats?.totalMinYear;
+  const periodLabel = period === 'week' ? 'cette semaine' : period === 'month' ? 'ce mois' : 'cette année';
 
   return (
     <View style={styles.root}>
@@ -134,32 +147,62 @@ export default function TrainScreen() {
             </>
           ) : null}
 
-          {/* Activité hebdo */}
+          {/* Activité - filtrable par semaine / mois / année */}
           {stats ? (
             <>
-              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Activité (8 dernières semaines)
-              </ThemedText>
-              <View style={styles.card}>
-                <View style={styles.chart}>
-                  {stats.weekly.map((w, i) => (
-                    <View key={i} style={styles.chartCol}>
-                      <View style={styles.barWrap}>
-                        <View
-                          style={{
-                            width: '70%',
-                            height: Math.max(3, (w.min / maxWeek) * CHART_H),
-                            backgroundColor: w.min > 0 ? Palette.purple : Palette.border,
-                            borderRadius: 3,
-                          }}
-                        />
-                      </View>
-                      <ThemedText type="small" themeColor="textMuted" style={styles.chartLbl}>
-                        {w.label}
+              <View style={styles.activityHead}>
+                <ThemedText type="sectionTitle" themeColor="textSecondary">
+                  Activité
+                </ThemedText>
+                {periodMin && periodMin > 0 ? (
+                  <ThemedText type="smallBold" themeColor="brand">
+                    {formatHours(periodMin)} {periodLabel}
+                  </ThemedText>
+                ) : null}
+              </View>
+
+              <View style={styles.segment}>
+                {PERIODS.map((p) => {
+                  const active = period === p.key;
+                  return (
+                    <Pressable
+                      key={p.key}
+                      style={[styles.segmentBtn, active && styles.segmentBtnActive]}
+                      onPress={() => setPeriod(p.key)}>
+                      <ThemedText type="small" themeColor={active ? 'onBrand' : 'textSecondary'}>
+                        {p.label}
                       </ThemedText>
-                    </View>
-                  ))}
-                </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <View style={styles.card}>
+                {activitySeries.every((b) => b.min === 0) ? (
+                  <ThemedText type="small" themeColor="textMuted">
+                    Aucune séance sur cette période.
+                  </ThemedText>
+                ) : (
+                  <View style={styles.chart}>
+                    {activitySeries.map((b, i) => (
+                      <View key={i} style={styles.chartCol}>
+                        <View style={styles.barWrap}>
+                          <View
+                            style={{
+                              width: '70%',
+                              height: Math.max(3, (b.min / maxBar) * CHART_H),
+                              backgroundColor: b.min > 0 ? Palette.purple : Palette.border,
+                              borderRadius: 3,
+                            }}
+                          />
+                        </View>
+                        <ThemedText type="small" themeColor="textMuted" style={styles.chartLbl} numberOfLines={1}>
+                          {b.label}
+                        </ThemedText>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
             </>
           ) : null}
@@ -201,7 +244,7 @@ export default function TrainScreen() {
                   <ThemedText type="small" themeColor="textMuted">
                     {new Date(s.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                   </ThemedText>
-                  <Ionicons name="chevron-forward" size={18} color={Palette.textMuted} />
+                  <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
                 </Pressable>
               ))}
             </View>
@@ -255,6 +298,30 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.half,
   },
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
+  activityHead: {
+    marginTop: Spacing.five,
+    marginBottom: Spacing.two,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  segment: {
+    flexDirection: 'row',
+    gap: Spacing.one,
+    marginBottom: Spacing.two,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.pill,
+    padding: Spacing.one,
+  },
+  segmentBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.pill,
+  },
+  segmentBtnActive: { backgroundColor: Palette.evergreen },
   card: {
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,

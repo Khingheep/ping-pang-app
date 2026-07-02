@@ -9,7 +9,7 @@ import {
   validateMatch,
 } from './sets';
 
-describe('isValidSet — règle officielle (11 pts, 2 d’écart)', () => {
+describe('isValidSet - règle officielle (11 pts, 2 d’écart)', () => {
   it('accepte 11-0 … 11-9', () => {
     expect(isValidSet({ a: 11, b: 0 })).toBe(true);
     expect(isValidSet({ a: 11, b: 9 })).toBe(true);
@@ -40,7 +40,7 @@ describe('countSets', () => {
   });
 });
 
-describe('validateMatch — vainqueur à ceil(bestOf/2)', () => {
+describe('validateMatch - vainqueur à ceil(bestOf/2)', () => {
   it('Bo5 : 3-1 et 3-0 valides', () => {
     expect(validateMatch([{ a: 11, b: 7 }, { a: 9, b: 11 }, { a: 11, b: 8 }, { a: 11, b: 5 }], 5).ok).toBe(true);
     expect(validateMatch([{ a: 11, b: 7 }, { a: 11, b: 2 }, { a: 11, b: 8 }], 5).ok).toBe(true);

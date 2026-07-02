@@ -14,6 +14,7 @@ import {
   blockUser,
   clearConversation,
   fetchConversations,
+  markDelivered,
   setConversationArchived,
   subscribeIncomingMessages,
   type Conversation,
@@ -35,6 +36,8 @@ export default function MessagesScreen() {
 
   const load = useCallback(async () => {
     if (!myId) return;
+    // Le destinataire est joignable : ses messages entrants passent à « reçu » (✓✓ gris).
+    void markDelivered();
     setConvos(await fetchConversations(myId, { archived: showArchived }));
   }, [myId, showArchived]);
 
@@ -249,7 +252,9 @@ export default function MessagesScreen() {
                         {c.lastBody}
                       </ThemedText>
                     </View>
-                    <Ionicons name="ellipsis-horizontal" size={20} color={Palette.grey} />
+                    <Pressable onPress={() => setSheet(c)} hitSlop={12} style={styles.dots}>
+                      <Ionicons name="ellipsis-horizontal" size={20} color={Palette.grey} />
+                    </Pressable>
                   </Pressable>
                 ))
               )}
@@ -356,6 +361,7 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
   },
   main: { flex: 1 },
+  dots: { padding: Spacing.one },
   // Action-sheet
   backdrop: {
     flex: 1,

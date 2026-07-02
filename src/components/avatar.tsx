@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Image } from 'expo-image';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -19,7 +20,7 @@ type AvatarProps = {
 };
 
 /** Pastille colorée avec l'initiale, ou la photo de profil si `uri` est fourni. */
-export function Avatar({ name, size = 48, color, uri }: AvatarProps) {
+export const Avatar = memo(function Avatar({ name, size = 48, color, uri }: AvatarProps) {
   if (uri) {
     return (
       <Image
@@ -36,7 +37,7 @@ export function Avatar({ name, size = 48, color, uri }: AvatarProps) {
       <Text style={{ fontFamily: 'OpenSauceTwo-Bold', fontSize: size * 0.4, color: Palette.onyx }}>{initial}</Text>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   root: { alignItems: 'center', justifyContent: 'center' },

@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
-import { fetchNotifications, markAllRead, type Notif } from '@/lib/social/notifications';
+import { fetchNotifications, markAllRead, markRead, notifRoute, type Notif } from '@/lib/social/notifications';
 
 const ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   challenge: 'flash',
@@ -15,6 +15,8 @@ const ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   match_confirm: 'help-circle',
   match_confirmed: 'checkmark-circle',
   match_disputed: 'alert-circle',
+  match_like: 'heart',
+  match_comment: 'chatbubble-ellipses',
   friend_request: 'person-add',
   friend_accepted: 'people',
   slot: 'calendar',
@@ -22,6 +24,11 @@ const ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   session_like: 'heart',
   session_comment: 'chatbubble-ellipses',
 };
+
+// Route cible au tap, selon le type + l'entité portée par `data`. null = non navigable.
+function targetFor(n: Notif): Parameters<typeof router.push>[0] | null {
+  return notifRoute(n.type, n.data) as Parameters<typeof router.push>[0] | null;
+}
 
 function rel(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -44,6 +51,15 @@ export default function NotificationsScreen() {
     setItems((prev) => prev.map((n) => ({ ...n, read: true })));
   }
 
+  function open(n: Notif) {
+    const target = targetFor(n);
+    if (!n.read) {
+      markRead(n.id);
+      setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+    }
+    if (target) router.push(target);
+  }
+
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
@@ -64,24 +80,33 @@ export default function NotificationsScreen() {
               Aucune notification.
             </ThemedText>
           ) : (
-            items.map((n) => (
-              <View key={n.id} style={[styles.row, !n.read && styles.unread]}>
-                <View style={styles.icon}>
-                  <Ionicons name={ICON[n.type] ?? 'notifications'} size={18} color={Palette.evergreen} />
-                </View>
-                <View style={styles.main}>
-                  <ThemedText type="cardTitle">{n.title}</ThemedText>
-                  {n.body ? (
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {n.body}
-                    </ThemedText>
-                  ) : null}
-                </View>
-                <ThemedText type="small" themeColor="textMuted">
-                  {rel(n.created_at)}
-                </ThemedText>
-              </View>
-            ))
+            items.map((n) => {
+              const navigable = targetFor(n) !== null;
+              return (
+                <Pressable
+                  key={n.id}
+                  onPress={() => open(n)}
+                  disabled={!navigable}
+                  style={({ pressed }) => [styles.row, !n.read && styles.unread, pressed && navigable && styles.pressed]}
+                >
+                  <View style={styles.icon}>
+                    <Ionicons name={ICON[n.type] ?? 'notifications'} size={18} color={Palette.evergreen} />
+                  </View>
+                  <View style={styles.main}>
+                    <ThemedText type="cardTitle">{n.title}</ThemedText>
+                    {n.body ? (
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {n.body}
+                      </ThemedText>
+                    ) : null}
+                  </View>
+                  <ThemedText type="small" themeColor="textMuted">
+                    {rel(n.created_at)}
+                  </ThemedText>
+                  {navigable ? <Ionicons name="chevron-forward" size={16} color={Palette.grey} /> : null}
+                </Pressable>
+              );
+            })
           )}
         </ScrollView>
       </SafeAreaView>
@@ -111,6 +136,7 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
   },
   unread: { borderColor: Palette.evergreen },
+  pressed: { opacity: 0.6 },
   icon: { width: 36, height: 36, borderRadius: Radius.sm, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
   main: { flex: 1 },
 });

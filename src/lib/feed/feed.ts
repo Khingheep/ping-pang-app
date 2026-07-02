@@ -24,7 +24,7 @@ type Row = {
   created_at: string;
 };
 
-/** Activité du club — feed global (world-readable). */
+/** Activité du club - feed global (world-readable). */
 export async function fetchFeed(limit = 30): Promise<FeedEvent[]> {
   const { data } = await supabase
     .from('feed_events')

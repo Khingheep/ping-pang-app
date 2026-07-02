@@ -1,3 +1,6 @@
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 
 export type Venue = {
@@ -7,14 +10,6 @@ export type Venue = {
   indoor: boolean | null;
   lat: number | null;
   lng: number | null;
-};
-
-export type EventPP = {
-  id: string;
-  title: string;
-  starts_at: string | null;
-  spots_left: number | null;
-  venue: { name: string } | null;
 };
 
 export async function fetchVenues(): Promise<Venue[]> {
@@ -35,6 +30,75 @@ export async function fetchFeaturedVenues(): Promise<Venue[]> {
     .neq('source', 'openstreetmap')
     .order('name', { ascending: true });
   return (data as Venue[] | null) ?? [];
+}
+
+/**
+ * Tables/lieux dont les coordonnées tombent dans le cadre visible de la carte (viewport).
+ * Appelé à chaque déplacement de la carte → on ne charge que ce qui est à l'écran.
+ */
+export async function fetchVenuesInBbox(
+  b: { n: number; s: number; e: number; w: number },
+  limit = 250,
+): Promise<Venue[]> {
+  const { data } = await supabase
+    .from('venues')
+    .select('id, name, address, indoor, lat, lng')
+    .gte('lat', b.s)
+    .lte('lat', b.n)
+    .gte('lng', b.w)
+    .lte('lng', b.e)
+    .limit(limit);
+  return (data as Venue[] | null) ?? [];
+}
+
+/**
+ * Recherche de lieux par nom, pour choisir son club. Sans recherche : on propose en priorité
+ * les lieux curatés (clubs ajoutés à la main), pas le dump OpenStreetMap.
+ */
+export async function searchVenues(query: string, limit = 20): Promise<Venue[]> {
+  const q = query.trim();
+  let req = supabase.from('venues').select('id, name, address, indoor, lat, lng');
+  if (q) {
+    const pattern = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    req = req.ilike('name', pattern);
+  } else {
+    req = req.neq('source', 'openstreetmap');
+  }
+  const { data } = await req.order('name', { ascending: true }).limit(limit);
+  return (data as Venue[] | null) ?? [];
+}
+
+/**
+ * Tente de retrouver un venue à partir d'un nom de club FFTT (les clubs FFTT sont ingérés dans
+ * `venues` avec `source='fftt'`). Préfiltre serveur sur le token le plus long, puis comparaison
+ * normalisée (sans accents/espaces/ponctuation) : exact d'abord, sinon inclusion forte.
+ * Renvoie null si rien de fiable → l'utilisateur choisira à la main.
+ */
+export async function matchVenueByName(clubName: string | null): Promise<Venue | null> {
+  const norm = (s: string) => foldText(s).replace(/[^a-z0-9]/g, '');
+  const target = norm(clubName ?? '');
+  if (target.length < 4) return null;
+  // Préfiltre serveur : le plus long token (≥3) du nom de club, pour ne pas charger tout le catalogue.
+  const longest = foldText(clubName ?? '')
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3)
+    .sort((a, b) => b.length - a.length)[0];
+  if (!longest) return null;
+  const pattern = `%${longest.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+  const { data } = await supabase
+    .from('venues')
+    .select('id, name, address, indoor, lat, lng')
+    .ilike('name', pattern)
+    .limit(60);
+  const rows = (data as Venue[] | null) ?? [];
+  return (
+    rows.find((v) => norm(v.name) === target) ??
+    rows.find((v) => {
+      const n = norm(v.name);
+      return n.length >= 5 && (n.includes(target) || target.includes(n));
+    }) ??
+    null
+  );
 }
 
 export async function fetchVenue(id: string): Promise<Venue | null> {
@@ -99,12 +163,34 @@ export async function suggestVenue(
   }
 }
 
-export async function fetchEvents(): Promise<EventPP[]> {
-  const { data } = await supabase
-    .from('events_ppp')
-    .select('id, title, starts_at, spots_left, venues(name)')
-    .order('starts_at', { ascending: true });
-  return ((data as unknown as { id: string; title: string; starts_at: string | null; spots_left: number | null; venues: { name: string } | null }[] | null) ?? []).map(
-    (e) => ({ id: e.id, title: e.title, starts_at: e.starts_at, spots_left: e.spots_left, venue: e.venues ?? null }),
-  );
+/**
+ * Lieux curatés (clubs ajoutés à la main, hors dump OSM), mis en cache. Sert la section
+ * « Autour de toi » du feed Parties : des lieux à découvrir où proposer un créneau.
+ */
+export function useFeaturedVenues() {
+  return useQuery({
+    queryKey: qk.venues.featured(),
+    queryFn: fetchFeaturedVenues,
+    staleTime: STALE.venues,
+  });
+}
+
+/**
+ * Lieux du cadre visible (bbox), mis en cache par zone. `keepPreviousData` garde les marqueurs
+ * précédents affichés pendant le chargement de la nouvelle zone → pas de flash au drag de carte.
+ * La clé arrondit les coordonnées (4 décimales) pour ne pas générer une requête par micro-déplacement.
+ */
+export function useVenuesInBbox(
+  bbox: { n: number; s: number; e: number; w: number } | null,
+  limit = 250,
+) {
+  return useQuery({
+    queryKey: qk.venues.bbox(
+      bbox ? `${bbox.s.toFixed(4)},${bbox.w.toFixed(4)},${bbox.n.toFixed(4)},${bbox.e.toFixed(4)}` : 'none',
+    ),
+    queryFn: () => fetchVenuesInBbox(bbox!, limit),
+    enabled: !!bbox,
+    staleTime: STALE.venues,
+    placeholderData: keepPreviousData,
+  });
 }

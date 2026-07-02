@@ -1,4 +1,8 @@
+import { useQuery } from '@tanstack/react-query';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
+import { matchVenueByName } from '@/lib/venues/venues';
 
 /** Ligne de résultat de recherche FFTT (action=search). */
 export type FfttPlayer = {
@@ -170,22 +174,65 @@ export async function fetchFfttCommonOpponents(a: string, b: string): Promise<Ff
   return (data as { common?: FfttHeadToHead[] })?.common ?? [];
 }
 
-/** Lie le compte FFTT au profil : enregistre fftt_id + fftt_points (force temps réel). */
+/** Adversaires communs FFTT entre deux licences (mis en cache). Désactivé si l'une manque ou si identiques. */
+export function useFfttCommonOpponents(myFftt: string | null | undefined, theirFftt: string | null | undefined) {
+  return useQuery({
+    queryKey: qk.fftt.commonOpponents(myFftt ?? 'none', theirFftt ?? 'none'),
+    queryFn: () => fetchFfttCommonOpponents(myFftt!, theirFftt!),
+    enabled: !!myFftt && !!theirFftt && myFftt !== theirFftt,
+    staleTime: STALE.trainingStats,
+  });
+}
+
+/** Lie le compte FFTT au profil : enregistre fftt_id + fftt_points (force temps réel) + club. */
 export async function linkFfttToProfile(userId: string, p: FfttPlayer): Promise<number | null> {
   const points = await resolveFfttPoints(p);
   const { error } = await supabase
     .from('players')
-    .update({ fftt_id: p.numberId, fftt_points: points })
+    .update({ fftt_id: p.numberId, fftt_points: points, fftt_club: p.club?.nom ?? null })
     .eq('id', userId);
   if (error) throw error;
+  // Best-effort : si le club FFTT correspond à un lieu connu et qu'aucun club maison n'est défini,
+  // on le pré-remplit. N'interrompt jamais le lien (colonne/match absents → on ignore).
+  try {
+    const club = p.club?.nom ?? null;
+    if (club) {
+      const venue = await matchVenueByName(club);
+      if (venue) {
+        const { data } = await supabase.from('players').select('home_venue_id').eq('id', userId).maybeSingle();
+        const has = (data as { home_venue_id: string | null } | null)?.home_venue_id;
+        if (!has) await supabase.from('players').update({ home_venue_id: venue.id }).eq('id', userId);
+      }
+    }
+  } catch {
+    /* match club optionnel */
+  }
   return points;
 }
 
-/** Délie le compte FFTT : efface fftt_id + fftt_points (l'ELO/Glicko déjà acquis est conservé). */
+/**
+ * Backfill du club pour un compte déjà lié AVANT l'ajout de `fftt_club` : relit le club
+ * depuis le miroir local `fftt_players` (pas d'appel réseau FFTT) et le persiste. No-op si
+ * le club est introuvable dans le miroir. Renvoie le club résolu (ou null).
+ */
+export async function backfillFfttClub(userId: string, ffttId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('fftt_players')
+    .select('club_nom')
+    .eq('number_id', ffttId)
+    .maybeSingle();
+  const club = (data as { club_nom: string | null } | null)?.club_nom ?? null;
+  if (club) {
+    await supabase.from('players').update({ fftt_club: club }).eq('id', userId);
+  }
+  return club;
+}
+
+/** Délie le compte FFTT : efface fftt_id + fftt_points + club (l'ELO/Glicko déjà acquis est conservé). */
 export async function unlinkFfttFromProfile(userId: string): Promise<void> {
   const { error } = await supabase
     .from('players')
-    .update({ fftt_id: null, fftt_points: null })
+    .update({ fftt_id: null, fftt_points: null, fftt_club: null })
     .eq('id', userId);
   if (error) throw error;
 }

@@ -1,5 +1,5 @@
 /**
- * Connexion (« J'ai déjà un compte ») — email + mot de passe.
+ * Connexion (« J'ai déjà un compte ») - email + mot de passe.
  * Atteint seulement après réinstallation / nouveau téléphone / déconnexion (sinon la
  * session persistée fait arriver direct dans l'app).
  */

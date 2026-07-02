@@ -1,5 +1,5 @@
 /**
- * Écran PROFILE PLAYER — profil perso à 3 onglets (Vous · Entraînements · Derniers matchs).
+ * Écran PROFILE PLAYER - profil perso à 3 onglets (Vous · Entraînements · Derniers matchs).
  *
  * Structure issue du Figma « PROFILE PLAYER », re-skinné dans notre thème CLAIR
  * (evergreen + blanc + accents), pas le mock sombre. Toutes les données sont
@@ -9,7 +9,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Dimensions, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 
@@ -20,11 +20,21 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { computeObjective, levelForElo, manualObjective, type Objective } from '@/lib/elo';
 import { fetchFfttHistory, type FfttRankingPoint } from '@/lib/fftt/link';
 import { fetchFfttMatches, type FfttMatchView } from '@/lib/fftt/matches';
-import { computeEloProgression, computeStats, fetchRecentMatches, type MatchView } from '@/lib/matches/history';
+import {
+  buildEloProgression,
+  computeStats,
+  fetchRatingHistory,
+  fetchRecentMatches,
+  type MatchView,
+  type RatingPoint,
+} from '@/lib/matches/history';
 import { parseSetScores } from '@/lib/matches/sets';
-import { fetchMyProfile, updateMyGoal, type PlayerProfile } from '@/lib/players/profile';
+import { fetchHomeVenue, fetchMyProfile, setHomeVenue, updateMyGoal, type PlayerProfile } from '@/lib/players/profile';
 import { fetchTrainingSessions, type TrainingSession } from '@/lib/training/sessions';
 import { notify } from '@/lib/ui/alert';
+import { type Venue } from '@/lib/venues/venues';
+import { ClubSearch } from '@/components/club-search';
+import { SwipeSheet } from '@/components/swipe-sheet';
 
 const TRACK = Colors.light.backgroundSelected; // fond des barres de progression sur card blanche
 
@@ -179,15 +189,20 @@ export default function ProfileScreen() {
   const { session } = useAuth();
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [matches, setMatches] = useState<MatchView[]>([]);
+  const [ratingHistory, setRatingHistory] = useState<RatingPoint[]>([]);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [ffttHistory, setFfttHistory] = useState<FfttRankingPoint[]>([]);
   const [ffttMatches, setFfttMatches] = useState<FfttMatchView[]>([]);
   const [tab, setTab] = useState(0);
   const [goalOpen, setGoalOpen] = useState(false);
+  const [homeVenue, setHomeVenueState] = useState<Venue | null>(null);
+  const [clubOpen, setClubOpen] = useState(false);
+  const [clubDraft, setClubDraft] = useState<Venue | null>(null);
 
   const reload = useCallback(() => {
     const id = session?.user?.id;
     if (!id) return;
+    fetchHomeVenue(id).then(setHomeVenueState);
     fetchMyProfile(id).then((p) => {
       setProfile(p);
       if (p?.fftt_id) {
@@ -199,6 +214,7 @@ export default function ProfileScreen() {
       }
     });
     fetchRecentMatches(id, 200).then(setMatches);
+    fetchRatingHistory(id, 180).then(setRatingHistory);
     fetchTrainingSessions(id, 200).then(setSessions);
   }, [session?.user?.id]);
 
@@ -220,7 +236,7 @@ export default function ProfileScreen() {
   const objective: Objective = hasGoal
     ? manualObjective(elo, profile!.goal_elo!, profile!.goal_start_elo ?? elo)
     : computeObjective(elo);
-  const progression = computeEloProgression(matches);
+  const progression = buildEloProgression(ratingHistory, elo);
 
   // Liste unifiée « Derniers matchs » : matchs Ping Pang confirmés + matchs officiels FFTT,
   // triés du plus récent au plus ancien (les matchs sans date FFTT lisible passent en fin).
@@ -276,18 +292,25 @@ export default function ProfileScreen() {
     reload();
   }
 
-  // Série d'ELO cumulé (du plus ancien au plus récent) pour la courbe.
-  const eloSeries = (() => {
-    const chrono = confirmed.filter((m) => m.ranked).reverse();
-    if (chrono.length < 2) return [];
-    let acc = elo - chrono.reduce((s, m) => s + m.delta, 0);
-    const pts = [acc];
-    for (const m of chrono) {
-      acc += m.delta;
-      pts.push(acc);
+  function openClub() {
+    setClubDraft(homeVenue);
+    setClubOpen(true);
+  }
+
+  async function saveClub() {
+    const id = session?.user?.id;
+    if (!id) return;
+    try {
+      await setHomeVenue(id, clubDraft?.id ?? null);
+      setClubOpen(false);
+      reload();
+    } catch (e) {
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
     }
-    return pts;
-  })();
+  }
+
+  // Série d'ELO (du plus ancien au plus récent) pour la courbe, issue de l'historique de rating.
+  const eloSeries = progression.series;
 
   const activeDays = new Set<string>([
     ...confirmed.map((m) => dayKey(m.date)),
@@ -316,10 +339,33 @@ export default function ProfileScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 {profile?.bio?.trim() || profile?.player_type || level.label}
               </ThemedText>
-              {profile?.city ? (
-                <ThemedText type="small" themeColor="textSecondary">
-                  {profile.city}
-                </ThemedText>
+              {homeVenue || profile?.fftt_club || profile?.city ? (
+                <View style={styles.heroMeta}>
+                  {homeVenue ? (
+                    <View style={styles.heroMetaItem}>
+                      <Ionicons name="home-outline" size={13} color={Colors.light.textSecondary} />
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                        {homeVenue.name}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                  {profile?.fftt_club ? (
+                    <View style={styles.heroMetaItem}>
+                      <Ionicons name="ribbon-outline" size={13} color={Colors.light.textSecondary} />
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                        {profile.fftt_club}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                  {profile?.city ? (
+                    <View style={styles.heroMetaItem}>
+                      <Ionicons name="location-outline" size={13} color={Colors.light.textSecondary} />
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {profile.city}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                </View>
               ) : null}
             </View>
           </View>
@@ -331,7 +377,7 @@ export default function ProfileScreen() {
                 Meilleure perf
               </ThemedText>
               <ThemedText type="cardTitle" style={{ color: Palette.evergreen }}>
-                {bestPerf !== null ? `+${bestPerf}` : '—'}
+                {bestPerf !== null ? `+${bestPerf}` : '-'}
               </ThemedText>
             </View>
             <View style={[styles.pill, styles.pillDown]}>
@@ -339,7 +385,7 @@ export default function ProfileScreen() {
                 Plus grosse contre
               </ThemedText>
               <ThemedText type="cardTitle" style={{ color: Palette.redInk }}>
-                {worstContre !== null ? worstContre : '—'}
+                {worstContre !== null ? worstContre : '-'}
               </ThemedText>
             </View>
           </View>
@@ -399,6 +445,24 @@ export default function ProfileScreen() {
                     <View style={[styles.barFill, { width: `${Math.round(objective.pct * 100)}%` }]} />
                   </View>
                 ) : null}
+              </Pressable>
+
+              {/* Mon club (éditable) */}
+              <Pressable style={styles.objCard} onPress={openClub}>
+                <View style={styles.objTop}>
+                  <View style={styles.clubIcon}>
+                    <Ionicons name="home" size={20} color={Palette.evergreen} />
+                  </View>
+                  <View style={styles.objText}>
+                    <ThemedText type="cardTitle" numberOfLines={1}>
+                      {homeVenue ? homeVenue.name : 'Définis ton club'}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                      {homeVenue ? homeVenue.address ?? 'Ton club apparaît sur la carte' : 'Choisis ton club ou ton spot habituel'}
+                    </ThemedText>
+                  </View>
+                  <Ionicons name="pencil" size={16} color={Palette.grey} />
+                </View>
               </Pressable>
 
               {/* Matchs joués */}
@@ -487,10 +551,7 @@ export default function ProfileScreen() {
         </ScrollView>
 
         {/* Éditeur d'objectif */}
-        <Modal visible={goalOpen} transparent animationType="slide" onRequestClose={() => setGoalOpen(false)}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setGoalOpen(false)} />
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
+        <SwipeSheet visible={goalOpen} onClose={() => setGoalOpen(false)} style={styles.sheetPad}>
             <ThemedText type="cardTitle">Mon objectif</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
               ELO actuel : {elo}
@@ -540,8 +601,21 @@ export default function ProfileScreen() {
                 </ThemedText>
               </Pressable>
             ) : null}
-          </View>
-        </Modal>
+        </SwipeSheet>
+
+        {/* Éditeur de club */}
+        <SwipeSheet visible={clubOpen} onClose={() => setClubOpen(false)} style={styles.sheetPad}>
+            <ThemedText type="cardTitle">Mon club</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Choisis le lieu où tu joues le plus souvent. Il sera épinglé sur ta carte.
+            </ThemedText>
+            <ClubSearch selected={clubDraft} onSelect={setClubDraft} />
+            <Pressable style={styles.modalSave} onPress={saveClub}>
+              <ThemedText type="cardTitle" themeColor="onBrand">
+                Enregistrer
+              </ThemedText>
+            </Pressable>
+        </SwipeSheet>
       </SafeAreaView>
     </View>
   );
@@ -599,14 +673,14 @@ function PppMatchCard({ m, myName }: { m: MatchView; myName: string }) {
           </View>
         ) : (
           <ThemedText type="subtitle" themeColor={m.won ? 'brand' : 'textMuted'}>
-            {m.score || '—'}
+            {m.score || '-'}
           </ThemedText>
         )}
 
         <ThemedText
           type="cardTitle"
           style={[styles.matchDelta, { color: m.delta > 0 ? Palette.evergreen : m.delta < 0 ? Palette.redInk : Palette.grey }]}>
-          {m.delta ? `${m.delta > 0 ? '+' : ''}${m.delta}` : '—'}
+          {m.delta ? `${m.delta > 0 ? '+' : ''}${m.delta}` : '-'}
         </ThemedText>
       </View>
     </View>
@@ -644,13 +718,13 @@ function FfttMatchCard({ m, myName }: { m: FfttMatchView; myName: string }) {
         </View>
 
         <ThemedText type="subtitle" themeColor={m.won === true ? 'brand' : m.won === false ? 'textMuted' : 'textSecondary'}>
-          {m.won === true ? 'V' : m.won === false ? 'D' : '—'}
+          {m.won === true ? 'V' : m.won === false ? 'D' : '-'}
         </ThemedText>
 
         <ThemedText
           type="cardTitle"
           style={[styles.matchDelta, { color: gain != null && gain > 0 ? Palette.evergreen : gain != null && gain < 0 ? Palette.redInk : Palette.grey }]}>
-          {gain != null ? `${gain > 0 ? '+' : ''}${gain}` : '—'}
+          {gain != null ? `${gain > 0 ? '+' : ''}${gain}` : '-'}
         </ThemedText>
       </View>
     </View>
@@ -671,6 +745,8 @@ const styles = StyleSheet.create({
 
   hero: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, marginTop: Spacing.one },
   heroText: { flex: 1, gap: Spacing.half },
+  heroMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: Spacing.two },
+  heroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half, flexShrink: 1 },
 
   pillRow: { flexDirection: 'row', gap: Spacing.two },
   pill: {
@@ -711,6 +787,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   objText: { flex: 1, gap: Spacing.half },
+  clubIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
   barTrack: { height: 8, borderRadius: Radius.pill, backgroundColor: TRACK, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: Palette.evergreen, borderRadius: Radius.pill },
 
@@ -784,20 +861,7 @@ const styles = StyleSheet.create({
   },
   matchDelta: { width: 44, textAlign: 'right' },
 
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
-  modalSheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: Palette.whitePP,
-    borderTopLeftRadius: Radius.lg,
-    borderTopRightRadius: Radius.lg,
-    padding: Spacing.four,
-    paddingBottom: Spacing.six,
-    gap: Spacing.two,
-  },
-  modalHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: Palette.border, marginBottom: Spacing.two },
+  sheetPad: { paddingHorizontal: Spacing.four, gap: Spacing.two },
   modalLbl: { marginTop: Spacing.two },
   modalInput: {
     height: 52,

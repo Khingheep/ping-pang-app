@@ -1,5 +1,5 @@
 /**
- * Système ELO (style Chess.com) — Mission 01.
+ * Système ELO (style Chess.com) - Mission 01.
  * V1 : ELO simple K-factor. Glicko-2 envisagé en V2 (cf. vision.md §15).
  */
 

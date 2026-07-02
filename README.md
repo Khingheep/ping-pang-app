@@ -42,7 +42,7 @@ src/
 │       ├── index.tsx        # Feed
 │       ├── classement.tsx   # ELO Mondial / Paris
 │       ├── jouer.tsx        # défi 1v1 / score / tournoi
-│       ├── carte.tsx        # tables & événements
+│       ├── carte.tsx        # parties : club, créneaux ouverts, lieux
 │       └── profil.tsx       # ELO, niveau, stats
 ├── components/              # ThemedText, Screen, Card…
 ├── constants/theme.ts       # ⭐ TOKENS DESIGN — source de vérité unique (Eugenia)
@@ -64,5 +64,5 @@ re-skinner toute l'app. Aucun hex ni police en dur dans les écrans.
 ## Base de données
 
 Schéma initial : [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql)
-(`players`, `matches`, `challenges`, `venues`, `events_ppp`, `follows`). À appliquer via
+(`players`, `matches`, `challenges`, `venues`, `follows`). À appliquer via
 l'éditeur SQL Supabase ou `supabase db push`.

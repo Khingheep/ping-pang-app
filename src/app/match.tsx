@@ -14,7 +14,7 @@ import { MatchScoreboard } from '@/components/match-scoreboard';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { fetchMatchItem, type MatchView } from '@/lib/matches/history';
+import { fetchMatchFeedItem, type MatchFeedItem } from '@/lib/matches/feed';
 import {
   addMatchComment,
   fetchMatchComments,
@@ -24,7 +24,6 @@ import {
   type MatchComment,
   type MatchLiker,
 } from '@/lib/matches/social';
-import { fetchMyProfile, type PlayerProfile } from '@/lib/players/profile';
 
 function relativeDate(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -42,8 +41,7 @@ export default function MatchDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { session } = useAuth();
   const myId = session?.user?.id;
-  const [item, setItem] = useState<MatchView | null>(null);
-  const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [item, setItem] = useState<MatchFeedItem | null>(null);
   const [likers, setLikers] = useState<MatchLiker[]>([]);
   const [comments, setComments] = useState<MatchComment[]>([]);
   const [text, setText] = useState('');
@@ -52,16 +50,13 @@ export default function MatchDetailScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
   const load = useCallback(() => {
-    if (!id || !myId) return;
-    Promise.all([fetchMatchItem(id, myId), fetchMatchLikers(id), fetchMatchComments(id), fetchMyProfile(myId)]).then(
-      ([it, lk, cm, pr]) => {
-        setItem(it);
-        setLikers(lk);
-        setComments(cm);
-        setProfile(pr);
-        setLoading(false);
-      },
-    );
+    if (!id) return;
+    Promise.all([fetchMatchFeedItem(id, myId), fetchMatchLikers(id), fetchMatchComments(id)]).then(([it, lk, cm]) => {
+      setItem(it);
+      setLikers(lk);
+      setComments(cm);
+      setLoading(false);
+    });
   }, [id, myId]);
 
   useEffect(load, [load]);
@@ -122,13 +117,13 @@ export default function MatchDetailScreen() {
             <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
               {/* Le scoreboard */}
               <MatchScoreboard
-                opponent={item.opponent}
-                meName={profile?.display_name ?? 'Toi'}
-                meAvatarUrl={profile?.avatar_url}
+                topName={item.playerA.id === myId ? 'Toi' : item.playerA.name}
+                topAvatarUrl={item.playerA.avatarUrl}
+                bottomName={item.playerB.id === myId ? 'Toi' : item.playerB.name}
+                bottomAvatarUrl={item.playerB.avatarUrl}
                 setScores={item.setScores}
                 score={item.score}
-                won={item.won}
-                delta={item.delta}
+                topWon={item.winnerIsA}
                 ranked={item.ranked}
                 format={item.format}
                 date={item.date}

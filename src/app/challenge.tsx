@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -7,15 +8,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { qk } from '@/lib/query/keys';
 import { notify } from '@/lib/ui/alert';
-import {
-  challengePreview,
-  FORMAT_INFO,
-  sendChallenge,
-  type ChallengeFormat,
-} from '@/lib/social/challenges';
+import { challengePreview, FORMAT_INFO, sendChallenge, type ChallengeFormat } from '@/lib/social/challenges';
 
-const FORMATS: ChallengeFormat[] = ['bo3', 'bo5', 'bo7', 'wtt', 'champions'];
+const FORMATS: ChallengeFormat[] = ['bo5', 'bo3', 'bo7'];
 
 export default function ChallengeScreen() {
   const { opponentId, opponentName, opponentElo, opponentCity } = useLocalSearchParams<{
@@ -25,7 +22,8 @@ export default function ChallengeScreen() {
     opponentCity?: string;
   }>();
   const { session } = useAuth();
-  const [format, setFormat] = useState<ChallengeFormat>('wtt');
+  const qc = useQueryClient();
+  const [format, setFormat] = useState<ChallengeFormat>('bo5');
   const [preview, setPreview] = useState<{ winDelta: number; lossDelta: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -37,7 +35,6 @@ export default function ChallengeScreen() {
   const info = FORMAT_INFO[format];
   const win = preview?.winDelta ?? 0;
   const loss = preview?.lossDelta ?? 0;
-  const stake = Math.round((Math.abs(win) + Math.abs(loss)) / 2);
 
   async function send() {
     const me = session?.user?.id;
@@ -45,6 +42,7 @@ export default function ChallengeScreen() {
     try {
       setBusy(true);
       await sendChallenge(me, opponentId, format);
+      void qc.invalidateQueries({ queryKey: qk.challenges.outgoing(me) });
       setSent(true);
     } catch (e) {
       notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
@@ -74,15 +72,23 @@ export default function ChallengeScreen() {
           </ThemedText>
 
           <View style={styles.stakeCard}>
-            <ThemedText type="smallBold" themeColor="textSecondary">
-              ELO EN JEU
-            </ThemedText>
-            <ThemedText type="subtitle" themeColor="brand">
-              ± {stake} points
-            </ThemedText>
-            <ThemedText type="small" themeColor="textMuted">
-              +{win} si tu gagnes · {loss} si tu perds
-            </ThemedText>
+            <View style={styles.stakeCol}>
+              <ThemedText type="subtitle" themeColor="brand">
+                +{win}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textMuted">
+                si tu gagnes
+              </ThemedText>
+            </View>
+            <View style={styles.stakeDivider} />
+            <View style={styles.stakeCol}>
+              <ThemedText type="subtitle" themeColor="textSecondary">
+                {loss}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textMuted">
+                si tu perds
+              </ThemedText>
+            </View>
           </View>
 
           <Pressable style={styles.backBtn} onPress={() => router.back()}>
@@ -127,7 +133,7 @@ export default function ChallengeScreen() {
                   {info.tag.toUpperCase()}
                 </ThemedText>
               </View>
-              {format === 'wtt' ? (
+              {format === 'bo5' ? (
                 <View style={styles.reco}>
                   <ThemedText type="smallBold" themeColor="brand">
                     Recommandé
@@ -135,11 +141,8 @@ export default function ChallengeScreen() {
                 </View>
               ) : null}
             </View>
-            <ThemedText type="metric" style={styles.heroDelta}>
-              +{win}
-            </ThemedText>
-            <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.8 }}>
-              ELO max · {info.detail}
+            <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.8, marginTop: Spacing.two }}>
+              {info.detail}
             </ThemedText>
           </View>
 
@@ -157,10 +160,24 @@ export default function ChallengeScreen() {
             ))}
           </View>
 
-          <View style={styles.stakeInline}>
-            <ThemedText type="small" themeColor="textSecondary">
-              ELO en jeu : <ThemedText type="smallBold" themeColor="brand">± {stake} points</ThemedText> ({loss} si défaite)
-            </ThemedText>
+          <View style={styles.stakeCard}>
+            <View style={styles.stakeCol}>
+              <ThemedText type="subtitle" themeColor="brand">
+                +{win}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textMuted">
+                si tu gagnes
+              </ThemedText>
+            </View>
+            <View style={styles.stakeDivider} />
+            <View style={styles.stakeCol}>
+              <ThemedText type="subtitle" themeColor="textSecondary">
+                {loss}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textMuted">
+                si tu perds
+              </ThemedText>
+            </View>
           </View>
         </ScrollView>
 
@@ -194,12 +211,10 @@ const styles = StyleSheet.create({
   heroCard: { backgroundColor: Palette.evergreen, borderRadius: Radius.md, padding: Spacing.four, gap: Spacing.one },
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   reco: { backgroundColor: Palette.lime, borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
-  heroDelta: { color: Palette.lime, fontSize: 56, lineHeight: 60, marginTop: Spacing.two },
   formatRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
   fPill: { paddingVertical: Spacing.three, paddingHorizontal: Spacing.four, borderRadius: Radius.xs, alignItems: 'center' },
   fActive: { backgroundColor: Palette.evergreen },
   fIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  stakeInline: { marginTop: Spacing.three },
   submit: {
     margin: Spacing.four,
     height: 56,
@@ -219,14 +234,16 @@ const styles = StyleSheet.create({
   stakeCard: {
     marginTop: Spacing.five,
     alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.four,
-    gap: Spacing.one,
-    alignItems: 'center',
   },
+  stakeCol: { flex: 1, alignItems: 'center', gap: Spacing.half },
+  stakeDivider: { width: StyleSheet.hairlineWidth, alignSelf: 'stretch', backgroundColor: Palette.border },
   backBtn: {
     marginTop: Spacing.five,
     alignSelf: 'stretch',

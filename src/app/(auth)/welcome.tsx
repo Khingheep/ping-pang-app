@@ -1,5 +1,5 @@
 /**
- * Écran d'accueil (premier lancement) — landing plein écran, façon « hero » :
+ * Écran d'accueil (premier lancement) - landing plein écran, façon « hero » :
  * photo de la boutique Ping Pang Paris + dégradé, gros CTA « Créer un compte »,
  * petit lien « J'ai déjà un compte » (rare : seulement réinstall / nouveau tél / après déconnexion ;
  * une session persistée fait arriver l'utilisateur direct sur l'app sans passer par ici).

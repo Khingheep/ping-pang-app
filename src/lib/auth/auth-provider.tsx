@@ -6,6 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ensurePlayerProfile, fetchMyProfile } from '@/lib/players/profile';
+import { queryClient } from '@/lib/query/client';
 import { registerForPush } from '@/lib/push/register';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase/client';
 
@@ -148,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async signOut() {
         onboardedRef.current = false;
         await supabase.auth.signOut();
+        queryClient.clear(); // évite que le cache du compte précédent fuite vers le suivant
       },
       needsOnboarding,
       markOnboarded() {

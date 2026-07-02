@@ -1,3 +1,6 @@
+import { useQuery } from '@tanstack/react-query';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 
 export type SlotFormat = 'ntt' | '3sets' | '2sets';
@@ -7,6 +10,8 @@ export type Slot = {
   id: string;
   venueId: string;
   venueName: string;
+  venueAddress: string | null;
+  venueIndoor: boolean | null;
   venueLat: number | null;
   venueLng: number | null;
   hostId: string;
@@ -29,18 +34,20 @@ type Row = {
   level_min: number | null;
   level_max: number | null;
   host: { display_name: string } | null;
-  venues: { name: string; lat: number | null; lng: number | null } | null;
+  venues: { name: string; address: string | null; indoor: boolean | null; lat: number | null; lng: number | null } | null;
   slot_participants: { player_id: string; players: { display_name: string; elo: number } | null }[];
 };
 
 const SELECT =
-  'id, venue_id, host_id, starts_at, ends_at, format, level_min, level_max, host:host_id(display_name), venues(name, lat, lng), slot_participants(player_id, players(display_name, elo))';
+  'id, venue_id, host_id, starts_at, ends_at, format, level_min, level_max, host:host_id(display_name), venues(name, address, indoor, lat, lng), slot_participants(player_id, players(display_name, elo))';
 
 function mapRow(r: Row): Slot {
   return {
     id: r.id,
     venueId: r.venue_id,
     venueName: r.venues?.name ?? 'Lieu',
+    venueAddress: r.venues?.address ?? null,
+    venueIndoor: r.venues?.indoor ?? null,
     venueLat: r.venues?.lat ?? null,
     venueLng: r.venues?.lng ?? null,
     hostId: r.host_id,
@@ -138,4 +145,13 @@ export function slotTimeLabel(startsAt: string, endsAt: string): string {
   const day = s.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
   const t = (d: Date) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   return `${day} · ${t(s)} → ${t(e)}`;
+}
+
+/** Tous les créneaux à venir (pour la Carte), mis en cache. */
+export function useUpcomingSlots(limit = 200) {
+  return useQuery({
+    queryKey: qk.venues.upcomingSlots(),
+    queryFn: () => fetchUpcomingSlots(limit),
+    staleTime: STALE.venues,
+  });
 }

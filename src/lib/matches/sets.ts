@@ -1,6 +1,6 @@
 /**
  * Détail des manches d'un match (« set scores »).
- * Stockage : "11-7,9-11,11-8" — chaque manche "a-b" du point de vue de player_a.
+ * Stockage : "11-7,9-11,11-8" - chaque manche "a-b" du point de vue de player_a.
  */
 
 export type SetScore = { a: number; b: number };

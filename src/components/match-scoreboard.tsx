@@ -1,32 +1,37 @@
 /**
- * Scoreboard d'un match, façon tableau de tennis de table : deux lignes (toi / adversaire),
- * une colonne par manche avec les points, et le total de manches gagnées mis en avant à droite.
+ * Scoreboard d'un match, façon tableau de tennis de table : deux lignes (joueur A / joueur B),
+ * une colonne par manche séparée par une barre, et le total de manches gagnées à droite.
  * Le gagnant de chaque manche a son score en surbrillance ; le vainqueur du match a un badge vert.
+ * Générique : montre deux joueurs quelconques (feed global). set_scores est vu du joueur du HAUT.
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import { memo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { countSets, parseSetScores } from '@/lib/matches/sets';
+import { relativeDate } from '@/lib/ui/date';
 
 type Props = {
-  /** Nom de l'adversaire (affiché en bas). */
-  opponent: string;
-  /** Nom du joueur courant (affiché en haut). */
-  meName: string;
-  meAvatarUrl?: string | null;
-  oppAvatarUrl?: string | null;
-  /** Détail des manches, vu de MON côté : "11-7,9-11,11-8". */
+  /** Joueur du haut (référence du set_scores). */
+  topName: string;
+  topAvatarUrl?: string | null;
+  topColor?: string;
+  /** Joueur du bas. */
+  bottomName: string;
+  bottomAvatarUrl?: string | null;
+  bottomColor?: string;
+  /** Détail des manches, vu du joueur du HAUT : "11-7,9-11,11-8". */
   setScores: string | null;
-  /** Score agrégé "3-2" (fallback si pas de détail de manches). */
+  /** Score agrégé "3-2" vu du joueur du haut (fallback si pas de détail). */
   score: string;
-  won: boolean;
-  delta?: number;
+  /** Le vainqueur du match est-il le joueur du haut ? */
+  topWon: boolean;
   ranked?: boolean;
-  /** "WTT" | "Bo5" | "Bo3" */
+  /** "BO7" | "BO5" | "BO3" */
   format?: string;
   /** Date ISO du match. */
   date?: string;
@@ -39,16 +44,7 @@ type Props = {
   onComment?: () => void;
 };
 
-function relativeDate(iso?: string): string {
-  if (!iso) return '';
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  if (days <= 0) return "Aujourd'hui";
-  if (days === 1) return 'Hier';
-  if (days < 7) return `Il y a ${days}j`;
-  return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-}
-
-/** Une ligne joueur : avatar + nom + points par manche + total de manches. */
+/** Une ligne joueur : avatar + nom + points par manche (séparés par des barres) + total. */
 function PlayerRow({
   name,
   avatarUrl,
@@ -80,7 +76,7 @@ function PlayerRow({
 
       <View style={styles.setsCells}>
         {points.map((p, i) => (
-          <View key={i} style={styles.setCell}>
+          <View key={i} style={[styles.setCell, i > 0 && styles.setCellBar]}>
             <ThemedText
               type={isWinnerOf[i] ? 'cardTitle' : 'default'}
               themeColor={isWinnerOf[i] ? 'brand' : 'textMuted'}>
@@ -99,15 +95,16 @@ function PlayerRow({
   );
 }
 
-export function MatchScoreboard({
-  opponent,
-  meName,
-  meAvatarUrl,
-  oppAvatarUrl,
+export const MatchScoreboard = memo(function MatchScoreboard({
+  topName,
+  topAvatarUrl,
+  topColor = Palette.purple,
+  bottomName,
+  bottomAvatarUrl,
+  bottomColor = Palette.blue,
   setScores,
   score,
-  won,
-  delta,
+  topWon,
   ranked,
   format,
   date,
@@ -125,8 +122,8 @@ export function MatchScoreboard({
   // Manches gagnées : on privilégie le détail des manches, sinon on lit le score agrégé "3-2".
   const counted = countSets(sets);
   const [scoreA, scoreB] = score.split('-').map((n) => Number.parseInt(n, 10));
-  const meSets = hasSets ? counted.a : Number.isFinite(scoreA) ? scoreA : won ? 1 : 0;
-  const oppSets = hasSets ? counted.b : Number.isFinite(scoreB) ? scoreB : won ? 0 : 1;
+  const topSets = hasSets ? counted.a : Number.isFinite(scoreA) ? scoreA : topWon ? 1 : 0;
+  const bottomSets = hasSets ? counted.b : Number.isFinite(scoreB) ? scoreB : topWon ? 0 : 1;
 
   return (
     <Pressable style={styles.card} onPress={onPress} disabled={!onPress}>
@@ -145,66 +142,49 @@ export function MatchScoreboard({
       {hasSets ? (
         <View style={styles.board}>
           <PlayerRow
-            name={meName}
-            avatarUrl={meAvatarUrl}
-            color={Palette.purple}
+            name={topName}
+            avatarUrl={topAvatarUrl}
+            color={topColor}
             points={sets.map((s) => s.a)}
             isWinnerOf={sets.map((s) => s.a > s.b)}
-            setsWon={meSets}
-            matchWinner={won}
+            setsWon={topSets}
+            matchWinner={topWon}
           />
           <View style={styles.divider} />
           <PlayerRow
-            name={opponent}
-            avatarUrl={oppAvatarUrl}
-            color={Palette.blue}
+            name={bottomName}
+            avatarUrl={bottomAvatarUrl}
+            color={bottomColor}
             points={sets.map((s) => s.b)}
             isWinnerOf={sets.map((s) => s.b > s.a)}
-            setsWon={oppSets}
-            matchWinner={!won}
+            setsWon={bottomSets}
+            matchWinner={!topWon}
           />
         </View>
       ) : (
         // Pas de détail des manches : on retombe sur le score simple.
         <View style={styles.board}>
           <View style={styles.simpleRow}>
-            <Avatar name={meName} size={28} color={Palette.purple} uri={meAvatarUrl} />
-            <ThemedText type="cardTitle" numberOfLines={1} style={styles.name}>
-              {meName}
+            <Avatar name={topName} size={28} color={topColor} uri={topAvatarUrl} />
+            <ThemedText type={topWon ? 'cardTitle' : 'default'} themeColor={topWon ? 'text' : 'textSecondary'} numberOfLines={1} style={styles.name}>
+              {topName}
             </ThemedText>
-            <ThemedText type="subtitle" themeColor={won ? 'brand' : 'textMuted'}>
-              {meSets}
+            <ThemedText type="subtitle" themeColor={topWon ? 'brand' : 'textMuted'}>
+              {topSets}
             </ThemedText>
           </View>
           <View style={styles.divider} />
           <View style={styles.simpleRow}>
-            <Avatar name={opponent} size={28} color={Palette.blue} uri={oppAvatarUrl} />
-            <ThemedText type="cardTitle" numberOfLines={1} style={styles.name}>
-              {opponent}
+            <Avatar name={bottomName} size={28} color={bottomColor} uri={bottomAvatarUrl} />
+            <ThemedText type={!topWon ? 'cardTitle' : 'default'} themeColor={!topWon ? 'text' : 'textSecondary'} numberOfLines={1} style={styles.name}>
+              {bottomName}
             </ThemedText>
-            <ThemedText type="subtitle" themeColor={!won ? 'brand' : 'textMuted'}>
-              {oppSets}
+            <ThemedText type="subtitle" themeColor={!topWon ? 'brand' : 'textMuted'}>
+              {bottomSets}
             </ThemedText>
           </View>
         </View>
       )}
-
-      {/* Pied : résultat + ELO */}
-      <View style={styles.footer}>
-        <View style={[styles.resultChip, { backgroundColor: won ? Palette.green : Palette.red }]}>
-          <ThemedText type="smallBold" themeColor="text">
-            {won ? 'Victoire' : 'Défaite'}
-          </ThemedText>
-        </View>
-        {delta ? (
-          <View style={[styles.deltaChip, { backgroundColor: delta > 0 ? Palette.lime : Palette.whitePP }]}>
-            <ThemedText type="smallBold" themeColor={delta > 0 ? 'brand' : 'textMuted'}>
-              {delta > 0 ? '+' : ''}
-              {delta} ELO
-            </ThemedText>
-          </View>
-        ) : null}
-      </View>
 
       {/* Like + commentaire */}
       {showSocial ? (
@@ -225,7 +205,7 @@ export function MatchScoreboard({
       ) : null}
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {
@@ -244,7 +224,8 @@ const styles = StyleSheet.create({
   name: { flex: 1 },
 
   setsCells: { flexDirection: 'row', alignItems: 'center' },
-  setCell: { width: 24, alignItems: 'center' },
+  setCell: { width: 30, alignItems: 'center', justifyContent: 'center', paddingVertical: 1 },
+  setCellBar: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: Palette.border },
 
   totalCell: {
     width: 32,
@@ -252,16 +233,12 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xs,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: Spacing.one,
+    marginLeft: Spacing.two,
   },
   totalWin: { backgroundColor: Palette.evergreen },
   totalLoss: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
 
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: Palette.border },
-
-  footer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: Spacing.half },
-  resultChip: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
-  deltaChip: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
 
   social: {
     flexDirection: 'row',

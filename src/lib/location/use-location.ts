@@ -16,7 +16,7 @@ export type UseLocation = {
 /**
  * Position de l'utilisateur (foreground). Marche iOS/Android (expo-location) ET web/PWA.
  *
- * `auto` (défaut true) : récupère la position UNIQUEMENT si la permission est DÉJÀ accordée —
+ * `auto` (défaut true) : récupère la position UNIQUEMENT si la permission est DÉJÀ accordée -
  * ne déclenche JAMAIS la pop-up système à froid (le priming se fait dans l'onboarding).
  * `request()` est la seule voie qui peut afficher la demande d'autorisation.
  */

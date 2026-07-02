@@ -1,145 +1,164 @@
 /**
- * Onglet ELO-RANKING — carte « Mon classement » (ELO + delta 7 jours)
+ * Onglet ELO-RANKING - carte « Mon classement » (ELO + delta 7 jours)
  * + leaderboard filtrable Monde/France/Paris/Amis.
  *
  * Re-skin du Figma « ELO-RANKING » dans notre thème clair vert/blanc.
+ * Données via react-query (cache + refetch au focus) ; liste virtualisée en FlatList.
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { router } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { fetchRecentMatches, last7Delta, type MatchView } from '@/lib/matches/history';
-import { fetchLeaderboard, fetchMyProfile, type LeaderboardEntry, type PlayerProfile } from '@/lib/players/profile';
-import { fetchFriendIds } from '@/lib/social/friends';
+import { useEloDelta, useLeaderboard, useMyProfile, type LeaderboardEntry } from '@/lib/players/profile';
+import { useRefreshOnFocus } from '@/lib/query/use-refresh-on-focus';
+import { useFriendIds } from '@/lib/social/friends';
 
 const FILTERS = ['Monde', 'France', 'Paris', 'Amis'] as const;
+
+function Separator() {
+  return <View style={styles.separator} />;
+}
 
 export default function RankingScreen() {
   const { session } = useAuth();
   const myId = session?.user?.id;
 
-  const [profile, setProfile] = useState<PlayerProfile | null>(null);
-  const [rows, setRows] = useState<LeaderboardEntry[]>([]);
-  const [friendIds, setFriendIds] = useState<string[]>([]);
+  const profileQ = useMyProfile(myId);
+  const leaderboardQ = useLeaderboard(200);
+  const friendsQ = useFriendIds(myId);
+  const delta7Q = useEloDelta(myId, 7);
+
   const [filter, setFilter] = useState(0);
-  const [matches, setMatches] = useState<MatchView[]>([]);
 
-  const load = useCallback(() => {
-    if (!myId) return;
-    fetchMyProfile(myId).then(setProfile);
-    fetchLeaderboard(200).then(setRows);
-    fetchFriendIds(myId).then(setFriendIds);
-    fetchRecentMatches(myId, 100).then(setMatches);
-  }, [myId]);
+  // Rafraîchit chaque query au focus d'écran ; no-op réseau tant qu'elle est encore fraîche.
+  useRefreshOnFocus(profileQ.refetch);
+  useRefreshOnFocus(leaderboardQ.refetch);
+  useRefreshOnFocus(friendsQ.refetch);
+  useRefreshOnFocus(delta7Q.refetch);
 
-  useFocusEffect(load);
+  const profile = profileQ.data ?? null;
+  const rows = useMemo(() => leaderboardQ.data ?? [], [leaderboardQ.data]);
+  const friendIds = useMemo(() => friendsQ.data ?? [], [friendsQ.data]);
 
   const myRank = rows.findIndex((r) => r.id === myId) + 1;
   const elo = profile?.elo ?? 0;
-  const delta7 = last7Delta(matches);
+  const delta7 = delta7Q.data ?? 0;
 
-  const filtered = rows.filter((e) => {
-    if (filter === 1) return e.country === 'France';
-    if (filter === 2) return (e.city ?? '').toLowerCase().startsWith('paris');
-    if (filter === 3) return e.id === myId || friendIds.includes(e.id);
-    return true;
-  });
+  const filtered = useMemo(
+    () =>
+      rows.filter((e) => {
+        if (filter === 1) return e.country === 'France';
+        if (filter === 2) return (e.city ?? '').toLowerCase().startsWith('paris');
+        if (filter === 3) return e.id === myId || friendIds.includes(e.id);
+        return true;
+      }),
+    [rows, filter, friendIds, myId],
+  );
+
+  const renderItem = useCallback(
+    ({ item: e, index }: { item: LeaderboardEntry; index: number }) => {
+      const mine = e.id === myId;
+      return (
+        <Pressable
+          onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}
+          style={[styles.row, mine && styles.rowMine]}>
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.rank}>
+            {index + 1}
+          </ThemedText>
+          <Avatar name={e.display_name} size={36} />
+          <View style={styles.rowMain}>
+            <ThemedText type="cardTitle" numberOfLines={1}>
+              {e.display_name}
+            </ThemedText>
+            {e.city ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {e.city}
+              </ThemedText>
+            ) : null}
+          </View>
+          <ThemedText type="subtitle" themeColor="brand">
+            {e.elo}
+          </ThemedText>
+        </Pressable>
+      );
+    },
+    [myId],
+  );
+
+  const header = (
+    <>
+      <ThemedText type="title">ELO-Ranking</ThemedText>
+
+      {/* Carte Mon classement */}
+      <View style={styles.meCard}>
+        <View style={styles.meTop}>
+          <ThemedText type="metric" themeColor="onBrand" style={styles.meElo}>
+            {elo}
+          </ThemedText>
+          <View style={styles.meRight}>
+            <ThemedText type="smallBold" style={{ color: Palette.lime }}>
+              Mon classement
+            </ThemedText>
+            {myRank > 0 ? (
+              <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.85 }}>
+                #{myRank} mondial
+              </ThemedText>
+            ) : null}
+          </View>
+        </View>
+        <View style={styles.meDelta}>
+          <Ionicons
+            name={delta7 >= 0 ? 'caret-up' : 'caret-down'}
+            size={16}
+            color={delta7 >= 0 ? Palette.lime : Palette.red}
+          />
+          <ThemedText type="smallBold" style={{ color: delta7 >= 0 ? Palette.lime : Palette.red }}>
+            {delta7 >= 0 ? '+' : ''}
+            {delta7} · 7 derniers jours
+          </ThemedText>
+        </View>
+      </View>
+
+      {/* Filtres */}
+      <View style={styles.filters}>
+        {FILTERS.map((f, i) => (
+          <Pressable
+            key={f}
+            onPress={() => setFilter(i)}
+            style={[styles.pill, filter === i ? styles.pillActive : styles.pillIdle]}>
+            <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'text'}>
+              {f}
+            </ThemedText>
+          </Pressable>
+        ))}
+      </View>
+    </>
+  );
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-          <ThemedText type="title">ELO-Ranking</ThemedText>
-
-          {/* Carte Mon classement */}
-          <View style={styles.meCard}>
-            <View style={styles.meTop}>
-              <ThemedText type="metric" themeColor="onBrand" style={styles.meElo}>
-                {elo}
-              </ThemedText>
-              <View style={styles.meRight}>
-                <ThemedText type="smallBold" style={{ color: Palette.lime }}>
-                  Mon classement
-                </ThemedText>
-                {myRank > 0 ? (
-                  <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.85 }}>
-                    #{myRank} mondial
-                  </ThemedText>
-                ) : null}
-              </View>
-            </View>
-            <View style={styles.meDelta}>
-              <Ionicons
-                name={delta7 >= 0 ? 'caret-up' : 'caret-down'}
-                size={16}
-                color={delta7 >= 0 ? Palette.lime : Palette.red}
-              />
-              <ThemedText type="smallBold" style={{ color: delta7 >= 0 ? Palette.lime : Palette.red }}>
-                {delta7 >= 0 ? '+' : ''}
-                {delta7} · 7 derniers jours
-              </ThemedText>
-            </View>
-          </View>
-
-          {/* ───────── Classement ───────── */}
-          <View style={styles.body}>
-              <View style={styles.filters}>
-                {FILTERS.map((f, i) => (
-                  <Pressable
-                    key={f}
-                    onPress={() => setFilter(i)}
-                    style={[styles.pill, filter === i ? styles.pillActive : styles.pillIdle]}>
-                    <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'text'}>
-                      {f}
-                    </ThemedText>
-                  </Pressable>
-                ))}
-              </View>
-
-              <View style={styles.list}>
-                {filtered.map((e, i) => {
-                  const mine = e.id === myId;
-                  return (
-                    <Pressable
-                      key={e.id}
-                      onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}
-                      style={[styles.row, mine && styles.rowMine]}>
-                      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.rank}>
-                        {i + 1}
-                      </ThemedText>
-                      <Avatar name={e.display_name} size={36} />
-                      <View style={styles.rowMain}>
-                        <ThemedText type="cardTitle" numberOfLines={1}>
-                          {e.display_name}
-                        </ThemedText>
-                        {e.city ? (
-                          <ThemedText type="small" themeColor="textSecondary">
-                            {e.city}
-                          </ThemedText>
-                        ) : null}
-                      </View>
-                      <ThemedText type="subtitle" themeColor="brand">
-                        {e.elo}
-                      </ThemedText>
-                    </Pressable>
-                  );
-                })}
-                {filtered.length === 0 ? (
-                  <ThemedText type="default" themeColor="textSecondary">
-                    {filter === 3 ? 'Aucun ami pour l’instant.' : 'Aucun joueur pour ce filtre.'}
-                  </ThemedText>
-                ) : null}
-              </View>
-            </View>
-
-        </ScrollView>
+        <FlatList
+          data={filtered}
+          keyExtractor={(e) => e.id}
+          renderItem={renderItem}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scroll}
+          ListHeaderComponent={header}
+          ItemSeparatorComponent={Separator}
+          ListEmptyComponent={
+            <ThemedText type="default" themeColor="textSecondary">
+              {filter === 3 ? 'Aucun ami pour l’instant.' : 'Aucun joueur pour ce filtre.'}
+            </ThemedText>
+          }
+        />
       </SafeAreaView>
     </View>
   );
@@ -156,14 +175,12 @@ const styles = StyleSheet.create({
   meRight: { alignItems: 'flex-end', gap: Spacing.half },
   meDelta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
 
-  body: { marginTop: Spacing.four, gap: Spacing.two },
-
-  filters: { flexDirection: 'row', gap: Spacing.two },
+  filters: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.four, marginBottom: Spacing.two },
   pill: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
   pillActive: { backgroundColor: Palette.evergreen },
   pillIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
 
-  list: { gap: Spacing.two },
+  separator: { height: Spacing.two },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

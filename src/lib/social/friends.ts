@@ -1,3 +1,6 @@
+import { useQuery } from '@tanstack/react-query';
+
+import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 
 export type FriendStatus = 'none' | 'pending_out' | 'pending_in' | 'friends';
@@ -91,4 +94,24 @@ export async function fetchPartnerCandidates(myId: string, limit = 200): Promise
       if (a.isFriend !== b.isFriend) return a.isFriend ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+}
+
+/** IDs de mes amis (mis en cache) - sert au filtre « Amis » du classement. */
+export function useFriendIds(myId: string | undefined) {
+  return useQuery({
+    queryKey: qk.friends.ids(myId ?? 'anon'),
+    queryFn: () => fetchFriendIds(myId!),
+    enabled: !!myId,
+    staleTime: STALE.players,
+  });
+}
+
+/** Statut d'amitié avec un autre joueur (mis en cache). */
+export function useFriendStatus(myId: string | undefined, otherId: string | undefined) {
+  return useQuery({
+    queryKey: qk.friends.status(myId ?? 'anon', otherId ?? 'anon'),
+    queryFn: () => getFriendStatus(myId!, otherId!),
+    enabled: !!myId && !!otherId,
+    staleTime: STALE.players,
+  });
 }

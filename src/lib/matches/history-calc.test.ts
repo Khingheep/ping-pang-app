@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeEloProgression, computeStats, formatFromBestOf, last7Delta } from './history-calc';
+import { buildEloProgression, computeStats, formatFromBestOf } from './history-calc';
 import type { MatchView } from './history';
 
 function mv(o: Partial<MatchView>): MatchView {
@@ -16,7 +16,7 @@ function mv(o: Partial<MatchView>): MatchView {
     date: '2026-06-15T12:00:00',
     status: 'confirmed',
     iProposed: true,
-    format: 'WTT',
+    format: 'BO5',
     likeCount: 0,
     liked: false,
     commentCount: 0,
@@ -26,14 +26,14 @@ function mv(o: Partial<MatchView>): MatchView {
 
 describe('formatFromBestOf', () => {
   it('mappe best_of → libellé', () => {
-    expect(formatFromBestOf(7)).toBe('WTT');
-    expect(formatFromBestOf(3)).toBe('Bo3');
-    expect(formatFromBestOf(5)).toBe('Bo5');
-    expect(formatFromBestOf(null)).toBe('Bo5');
+    expect(formatFromBestOf(7)).toBe('BO7');
+    expect(formatFromBestOf(3)).toBe('BO3');
+    expect(formatFromBestOf(5)).toBe('BO5');
+    expect(formatFromBestOf(null)).toBe('BO5');
   });
 });
 
-describe('computeStats — uniquement classés + confirmés', () => {
+describe('computeStats - uniquement classés + confirmés', () => {
   const matches = [
     mv({ id: '1', won: true }),
     mv({ id: '2', won: true }),
@@ -49,35 +49,28 @@ describe('computeStats — uniquement classés + confirmés', () => {
   });
 });
 
-describe('last7Delta', () => {
-  const now = new Date('2026-06-20T12:00:00').getTime();
-  it('somme les deltas classés confirmés des 7 derniers jours', () => {
-    const matches = [
-      mv({ id: '1', date: '2026-06-18T12:00:00', delta: 10 }), // dans la fenêtre
-      mv({ id: '2', date: '2026-06-10T12:00:00', delta: 5 }), // > 7 jours → exclu
-      mv({ id: '3', date: '2026-06-19T12:00:00', delta: 3, ranked: false }), // amical → exclu
-      mv({ id: '4', date: '2026-06-19T12:00:00', delta: 7, status: 'pending' }), // non confirmé → exclu
-    ];
-    expect(last7Delta(matches, now)).toBe(10);
-  });
-});
-
-describe('computeEloProgression', () => {
+describe('buildEloProgression', () => {
   const now = new Date('2026-06-20T12:00:00');
-  const matches = [
-    mv({ id: '1', date: '2026-06-15T12:00:00', delta: 12 }), // juin
-    mv({ id: '2', date: '2026-06-16T12:00:00', delta: -4 }), // juin
-    mv({ id: '3', date: '2026-05-10T12:00:00', delta: 20 }), // mai
-    mv({ id: '4', date: '2026-06-17T12:00:00', delta: 100, ranked: false }), // ignoré
+  const history = [
+    { elo: 1200, at: '2026-05-20T12:00:00' }, // baseline (mois précédent)
+    { elo: 1212, at: '2026-06-05T12:00:00' }, // ce mois
+    { elo: 1208, at: '2026-06-16T12:00:00' }, // ce mois
   ];
-  const prog = computeEloProgression(matches, now);
 
-  it('6 mois, mois courant = +8 (12 - 4)', () => {
-    expect(prog.months).toHaveLength(6);
-    expect(prog.thisMonth).toBe(8);
-    expect(prog.months[5].delta).toBe(8); // juin
+  it('series chronologique, sans doublon si le dernier snapshot == ELO courant', () => {
+    expect(buildEloProgression(history, 1208, now).series).toEqual([1200, 1212, 1208]);
   });
-  it('le mois précédent agrège son delta (mai = 20)', () => {
-    expect(prog.months[4].delta).toBe(20);
+  it("ajoute l'ELO courant à la fin s'il diffère du dernier snapshot", () => {
+    expect(buildEloProgression(history, 1210, now).series).toEqual([1200, 1212, 1208, 1210]);
+  });
+  it('thisMonth = ELO courant − ELO au 1er du mois (dernier snapshot antérieur)', () => {
+    expect(buildEloProgression(history, 1208, now).thisMonth).toBe(8); // 1208 − 1200
+  });
+  it('sans snapshot avant le mois, base = plus ancien snapshot connu', () => {
+    const p = buildEloProgression([{ elo: 1205, at: '2026-06-10T12:00:00' }], 1215, now);
+    expect(p.thisMonth).toBe(10); // 1215 − 1205
+  });
+  it('historique vide → series = [courant], thisMonth = 0', () => {
+    expect(buildEloProgression([], 1300, now)).toEqual({ series: [1300], thisMonth: 0 });
   });
 });

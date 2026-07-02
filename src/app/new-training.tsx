@@ -46,7 +46,7 @@ const DUR_MIN = 15; // 15 min
 const DUR_MAX = 180; // 3h
 const DUR_STEP = 15; // paliers de 15 min
 
-// Emoji par feeling (la valeur stockée reste le mot FR — cf. FEELINGS / FEELING_COLOR).
+// Emoji par feeling (la valeur stockée reste le mot FR - cf. FEELINGS / FEELING_COLOR).
 const FEELING_EMOJI: Record<string, string> = {
   Difficile: '😣',
   Moyen: '😐',
@@ -56,7 +56,7 @@ const FEELING_EMOJI: Record<string, string> = {
 
 export default function NewTrainingScreen() {
   const { session } = useAuth();
-  const params = useLocalSearchParams<{ template?: string }>();
+  const params = useLocalSearchParams<{ template?: string; stroke?: string }>();
   const [strokes, setStrokes] = useState<string[]>([]);
   const [showAllStrokes, setShowAllStrokes] = useState(false);
   const [duration, setDuration] = useState(60);
@@ -79,10 +79,21 @@ export default function NewTrainingScreen() {
   const [locating, setLocating] = useState(false);
 
   const appliedTemplate = useRef(false);
+  const appliedStroke = useRef(false);
 
   useEffect(() => {
     fetchVenues().then(setVenues);
   }, []);
+
+  // Arrivée depuis la banque d'exercices avec ?stroke=<coup> : pré-coche ce coup.
+  useEffect(() => {
+    if (appliedStroke.current || !params.stroke) return;
+    const s = params.stroke;
+    if (!STROKES.includes(s)) return;
+    setStrokes((cur) => (cur.includes(s) ? cur : [...cur, s]));
+    if (STROKES.indexOf(s) >= STROKES_PREVIEW_COUNT) setShowAllStrokes(true);
+    appliedStroke.current = true;
+  }, [params.stroke]);
 
   // Arrivée depuis l'onglet avec ?template=<id> : on pré-remplit une fois que lieux,
   // candidats et modèles sont chargés (sinon le lieu/partenaire ne se retrouvent pas).
@@ -105,7 +116,7 @@ export default function NewTrainingScreen() {
   }, [session?.user?.id]);
 
   // Auto-détection du lieu à l'ouverture, UNIQUEMENT si la permission est déjà
-  // accordée (ne déclenche jamais le popup iOS — ça reste réservé au bouton).
+  // accordée (ne déclenche jamais le popup iOS - ça reste réservé au bouton).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -164,7 +175,7 @@ export default function NewTrainingScreen() {
     if (near.distanceKm > 1) {
       notify(
         'Lieu le plus proche',
-        `${near.venue.name} — à ${near.distanceKm.toFixed(1)} km. Change-le si ce n’est pas le bon.`,
+        `${near.venue.name} - à ${near.distanceKm.toFixed(1)} km. Change-le si ce n’est pas le bon.`,
       );
     }
   }
