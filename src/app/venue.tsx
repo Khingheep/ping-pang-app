@@ -67,7 +67,7 @@ export default function VenueScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Lieu</ThemedText>
@@ -84,7 +84,7 @@ export default function VenueScreen() {
             </View>
             {distLabel ? (
               <View style={styles.distBadge}>
-                <Ionicons name="navigate" size={12} color={Palette.evergreen} />
+                <Ionicons name="navigate" size={12} color={Palette.onyx} />
                 <ThemedText type="smallBold" themeColor="brand">
                   {' '}
                   {distLabel}
@@ -125,7 +125,7 @@ export default function VenueScreen() {
                 return (
                   <View key={s.id} style={styles.slot}>
                     <View style={styles.slotTop}>
-                      <Avatar name={s.hostName} size={40} color={Palette.purple} />
+                      <Avatar name={s.hostName} uri={s.hostAvatar} size={40} color={Palette.purple} />
                       <View style={{ flex: 1 }}>
                         <ThemedText type="cardTitle">{s.hostName}</ThemedText>
                         <ThemedText type="small" themeColor="textSecondary">
@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
     height: 54,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
     minWidth: 96,
     height: 40,
     borderRadius: Radius.xs,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.three,

@@ -21,7 +21,7 @@ export default function WelcomeScreen() {
       <StatusBar style="light" />
       <Image source={require('@/assets/images/hero.png')} style={StyleSheet.absoluteFill} contentFit="cover" />
       <LinearGradient
-        colors={['rgba(16,16,16,0.10)', 'rgba(9,44,37,0.55)', 'rgba(9,44,37,0.96)']}
+        colors={['rgba(16,16,16,0.10)', 'rgba(23,23,23,0.55)', 'rgba(23,23,23,0.96)']}
         locations={[0, 0.5, 1]}
         style={StyleSheet.absoluteFill}
       />
@@ -53,7 +53,7 @@ export default function WelcomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Palette.evergreen },
+  root: { flex: 1, backgroundColor: Palette.onyx },
   safe: { flex: 1, justifyContent: 'flex-end' },
   content: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.four, gap: Spacing.three },
   brand: { color: Palette.whitePP, fontSize: 40, lineHeight: 44 },

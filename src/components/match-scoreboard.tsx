@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: Spacing.two,
   },
-  totalWin: { backgroundColor: Palette.evergreen },
+  totalWin: { backgroundColor: Palette.onyx },
   totalLoss: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
 
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: Palette.border },

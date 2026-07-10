@@ -101,7 +101,7 @@ export function GifPicker({
         </View>
       ) : loading && !gifs.length ? (
         <View style={styles.center}>
-          <ActivityIndicator color={Palette.evergreen} />
+          <ActivityIndicator color={Palette.onyx} />
         </View>
       ) : (
         <FlatList

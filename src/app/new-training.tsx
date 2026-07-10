@@ -6,7 +6,9 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,11 +24,13 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { fetchPartnerCandidates, type PartnerCandidate } from '@/lib/social/friends';
 import {
   addTrainingSession,
+  EXERCISES_BANK,
   FEELINGS,
   fetchSessionTemplates,
   formatDuration,
   MAX_SESSION_PHOTOS,
   PARTNER_LEVELS,
+  partnersLabel,
   STROKES,
   STROKES_PREVIEW_COUNT,
   uploadSessionPhotos,
@@ -46,24 +50,44 @@ const DUR_MIN = 15; // 15 min
 const DUR_MAX = 180; // 3h
 const DUR_STEP = 15; // paliers de 15 min
 
-// Emoji par feeling (la valeur stockée reste le mot FR - cf. FEELINGS / FEELING_COLOR).
-const FEELING_EMOJI: Record<string, string> = {
-  Difficile: '😣',
-  Moyen: '😐',
-  Bien: '🙂',
-  Excellent: '🤩',
+// Style par ressenti : emoji + couleur (dégradé rouge → evergreen), teinte de fond du
+// cran sélectionné, couleur de libellé (contraste sur blanc). La valeur stockée reste le
+// mot FR - cf. FEELINGS.
+const FEELING_STYLE: Record<string, { emoji: string; color: string; tint: string; ink: string }> = {
+  Difficile: { emoji: '😣', color: '#E5674F', tint: '#FBE7E1', ink: '#C7492F' },
+  Moyen: { emoji: '😐', color: '#EFA94A', tint: '#FAEEDC', ink: '#C9821A' },
+  Bien: { emoji: '🙂', color: '#A7CF63', tint: '#EDF5DC', ink: '#5E9A34' },
+  Excellent: { emoji: '🤩', color: Palette.onyx, tint: '#DFE8E4', ink: Palette.onyx },
+};
+
+// Flow « ajouter une séance » façon onboarding (frame Figma Paul) : les questions
+// s'enchaînent une par une. Ordre validé avec Paul :
+// 1. Ce qu'on a travaillé → 2. Durée → 3. Description (après la durée, plus logique) →
+// 4. Ressenti (jauge) → 5. « Dis-nous en plus » (lieu + partenaire + match + photo).
+const STEP = { WORK: 0, DURATION: 1, DESCRIPTION: 2, FEELING: 3, MORE: 4 } as const;
+const STEP_COUNT = 5;
+
+const STEP_TITLES: Record<number, { title: string; sub: string }> = {
+  [STEP.WORK]: { title: 'Qu’as-tu travaillé ?', sub: 'Choisis tes exercices ou tes coups techniques.' },
+  [STEP.DURATION]: { title: 'Combien de temps ?', sub: 'La durée totale de ta séance.' },
+  [STEP.DESCRIPTION]: { title: 'Donne une description à ta séance', sub: 'Un mot d’ordre ou un titre (optionnel).' },
+  [STEP.FEELING]: { title: 'Comment t’es-tu senti pendant la séance ?', sub: 'Ton ressenti global.' },
+  [STEP.MORE]: { title: 'Dis-nous en plus !', sub: 'Lieu, partenaire et photo souvenir (optionnel).' },
 };
 
 export default function NewTrainingScreen() {
   const { session } = useAuth();
   const params = useLocalSearchParams<{ template?: string; stroke?: string }>();
+  // « Qu'as-tu travaillé ? » est la 1ʳᵉ étape (un ?stroke= pré-coche juste un coup).
+  const [step, setStep] = useState<number>(STEP.WORK);
   const [strokes, setStrokes] = useState<string[]>([]);
   const [showAllStrokes, setShowAllStrokes] = useState(false);
+  const [workQuery, setWorkQuery] = useState(''); // recherche exos/coups à l'étape « Qu'as-tu travaillé ? »
   const [duration, setDuration] = useState(60);
   const [partner, setPartner] = useState<string | null>(null);
   const [partnerElo, setPartnerElo] = useState('');
   const [candidates, setCandidates] = useState<PartnerCandidate[]>([]);
-  const [partnerPlayer, setPartnerPlayer] = useState<PartnerCandidate | null>(null);
+  const [partnerPlayers, setPartnerPlayers] = useState<PartnerCandidate[]>([]); // plusieurs partenaires taggés
   const [partnerQuery, setPartnerQuery] = useState('');
   const [feeling, setFeeling] = useState<string | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
@@ -73,6 +97,7 @@ export default function NewTrainingScreen() {
   const [query, setQuery] = useState('');
   const [note, setNote] = useState('');
   const [isSolo, setIsSolo] = useState(false);
+  const [hadMatch, setHadMatch] = useState(false); // « as-tu fait un match ? » — stocké pour les stats de saison
   const [photos, setPhotos] = useState<string[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [busy, setBusy] = useState(false);
@@ -213,18 +238,37 @@ export default function NewTrainingScreen() {
 
   const partnerMatches = useMemo(() => {
     const q = partnerQuery.trim().toLowerCase();
+    const taggedIds = new Set(partnerPlayers.map((p) => p.id)); // on ne re-propose pas un joueur déjà taggé
     // Sans recherche, on propose juste les premiers (amis en tête grâce au tri).
-    const base = q ? candidates.filter((c) => c.name.toLowerCase().includes(q)) : candidates;
+    const base = (q ? candidates.filter((c) => c.name.toLowerCase().includes(q)) : candidates).filter(
+      (c) => !taggedIds.has(c.id),
+    );
     return base.slice(0, 3);
-  }, [partnerQuery, candidates]);
+  }, [partnerQuery, candidates, partnerPlayers]);
 
-  function selectPartnerPlayer(c: PartnerCandidate) {
-    setPartnerPlayer(c);
+  // Recherche « Qu'as-tu travaillé ? » : filtre exos + coups (insensible aux accents), les
+  // chips se réorganisent tout seuls (flex-wrap). Vide → liste normale (preview + « voir tout »).
+  const workQ = foldText(workQuery.trim());
+  const exerciseResults = useMemo(
+    () => (workQ ? EXERCISES_BANK.filter((s) => foldText(s).includes(workQ)) : EXERCISES_BANK),
+    [workQ],
+  );
+  const strokeResults = useMemo(() => {
+    if (workQ) return STROKES.filter((s) => foldText(s).includes(workQ));
+    return showAllStrokes ? STROKES : STROKES.filter((s, i) => i < STROKES_PREVIEW_COUNT || strokes.includes(s));
+  }, [workQ, showAllStrokes, strokes]);
+
+  function addPartnerPlayer(c: PartnerCandidate) {
+    setPartnerPlayers((cur) => (cur.some((p) => p.id === c.id) ? cur : [...cur, c]));
     setPartner(null); // un vrai joueur prime sur le niveau générique
+    setPartnerElo('');
     setPartnerQuery('');
   }
+  function removePartnerPlayer(id: string) {
+    setPartnerPlayers((cur) => cur.filter((p) => p.id !== id));
+  }
 
-  /** Pré-remplit le formulaire à partir d'une séance passée (note & photo restent vides). */
+  /** Pré-remplit le flow à partir d'une séance passée (note & photo restent vides) et saute à la fin. */
   function applyTemplate(t: SessionTemplate) {
     setStrokes(t.strokes);
     setShowAllStrokes(t.strokes.some((s) => STROKES.indexOf(s) >= STROKES_PREVIEW_COUNT));
@@ -232,28 +276,30 @@ export default function NewTrainingScreen() {
     setFeeling(t.feeling);
     setIsSolo(t.isSolo);
 
-    // Partenaire : vrai joueur > ELO précis > niveau générique.
-    if (t.isSolo || (!t.partner && !t.partnerLevel)) {
-      setPartnerPlayer(null);
+    // Partenaires : vrais joueurs > ELO précis > niveau générique.
+    if (t.isSolo || (!t.partners.length && !t.partnerLevel)) {
+      setPartnerPlayers([]);
       setPartner(null);
       setPartnerElo('');
-    } else if (t.partner) {
-      setPartnerPlayer({
-        id: t.partner.id,
-        name: t.partner.name,
-        avatarUrl: t.partner.avatarUrl,
-        isFriend: candidates.find((c) => c.id === t.partner!.id)?.isFriend ?? false,
-      });
+    } else if (t.partners.length) {
+      setPartnerPlayers(
+        t.partners.map((pp) => ({
+          id: pp.id,
+          name: pp.name,
+          avatarUrl: pp.avatarUrl,
+          isFriend: candidates.find((c) => c.id === pp.id)?.isFriend ?? false,
+        })),
+      );
       setPartner(null);
       setPartnerElo('');
     } else if (t.partnerLevel?.startsWith('ELO ')) {
       setPartnerElo(t.partnerLevel.slice(4).trim());
       setPartner(null);
-      setPartnerPlayer(null);
+      setPartnerPlayers([]);
     } else {
       setPartner(t.partnerLevel);
       setPartnerElo('');
-      setPartnerPlayer(null);
+      setPartnerPlayers([]);
     }
 
     // Lieu : on retrouve le lieu en base via son id, sinon on retombe sur un lieu libre.
@@ -271,6 +317,8 @@ export default function NewTrainingScreen() {
 
     setQuery('');
     setPartnerQuery('');
+    // Tout est pré-rempli → on saute directement au dernier écran avant l'envoi.
+    setStep(STEP.MORE);
   }
 
   function toggleStroke(s: string) {
@@ -293,14 +341,16 @@ export default function NewTrainingScreen() {
         playerId: id,
         durationMin: duration,
         strokes,
-        partnerLevel: isSolo ? null : partnerElo.trim() ? `ELO ${partnerElo.trim()}` : partner,
-        partnerId: isSolo ? null : partnerPlayer?.id ?? null,
+        // Niveau/ELO générique seulement en repli : dès qu'un vrai joueur est taggé, il prime.
+        partnerLevel: isSolo || partnerPlayers.length ? null : partnerElo.trim() ? `ELO ${partnerElo.trim()}` : partner,
+        partnerIds: isSolo ? [] : partnerPlayers.map((p) => p.id),
         venueId: venue?.id ?? null,
         venueLabel: venue ? null : customVenue,
         feeling,
         note: note.trim() || null,
         photoUrls,
         isSolo,
+        hadMatch,
       });
       const failed = photos.length - photoUrls.length;
       const durLabel = duration >= 60 ? `${Math.floor(duration / 60)}h${duration % 60 ? duration % 60 : ''}` : `${duration} min`;
@@ -317,127 +367,314 @@ export default function NewTrainingScreen() {
     }
   }
 
+  const isLast = step === STEP.MORE;
+  // Seule contrainte du flow : dire ce qu'on a travaillé (exo ou coup). Le reste est optionnel.
+  const canNext = step === STEP.WORK ? strokes.length > 0 : true;
+
+  function back() {
+    if (step > 0) setStep(step - 1);
+    else router.back();
+  }
+  function next() {
+    if (!canNext) return;
+    if (isLast) void save();
+    else setStep(step + 1);
+  }
+
+  const heading = STEP_TITLES[step];
+
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
-            <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
+          {/* Bouton retour présent sur chaque écran : revient à l'étape précédente,
+              ou ferme l'écran depuis la première étape. */}
+          <Pressable onPress={back} hitSlop={12} disabled={busy} style={styles.backBtn}>
+            <Ionicons name={step > 0 ? 'arrow-back' : 'chevron-back'} size={22} color={Palette.onyx} />
+            <ThemedText type="smallBold">{step > 0 ? 'Retour' : 'Fermer'}</ThemedText>
           </Pressable>
           <ThemedText type="cardTitle">Noter un entraînement</ThemedText>
-          <View style={{ width: 26 }} />
+          <ThemedText type="small" themeColor="textSecondary">
+            {step + 1}/{STEP_COUNT}
+          </ThemedText>
+        </View>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${((step + 1) / STEP_COUNT) * 100}%` }]} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {templates.length > 0 ? (
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <ThemedText type="title" style={styles.question}>
+            {heading.title}
+          </ThemedText>
+          <ThemedText type="default" themeColor="textSecondary" style={styles.questionSub}>
+            {heading.sub}
+          </ThemedText>
+
+          {step === STEP.DESCRIPTION ? (
+            <TextInput
+              style={styles.descNote}
+              placeholder="Séance de reprise avant la rentrée…"
+              placeholderTextColor={Palette.grey}
+              value={note}
+              onChangeText={setNote}
+              multiline
+            />
+          ) : null}
+
+          {step === STEP.WORK ? (
             <>
-              <ThemedText type="smallBold" themeColor="textSecondary" style={[styles.lbl, { marginTop: 0 }]}>
-                RÉPÉTER UNE SÉANCE
-              </ThemedText>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.tplRow}>
-                {templates.map((t) => {
-                  const partnerLabel = t.isSolo ? 'Solo' : t.partner?.name ?? t.partnerLevel ?? null;
-                  return (
-                    <Pressable key={t.id} style={styles.tplCard} onPress={() => applyTemplate(t)}>
-                      <View style={styles.tplHead}>
-                        <ThemedText type="cardTitle" themeColor="brand">
-                          {formatDuration(t.durationMin)}
-                        </ThemedText>
-                        <Ionicons name="repeat" size={16} color={Palette.evergreen} />
-                      </View>
-                      <ThemedText type="small" numberOfLines={2}>
-                        {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
+              {templates.length > 0 && !workQ ? (
+                <>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={[styles.lbl, { marginTop: 0 }]}>
+                    RÉPÉTER UNE SÉANCE
+                  </ThemedText>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.tplRow}>
+                    {templates.map((t) => {
+                      const partnerLabel = t.isSolo ? 'Solo' : partnersLabel(t) ?? t.partnerLevel ?? null;
+                      return (
+                        <Pressable key={t.id} style={styles.tplCard} onPress={() => applyTemplate(t)}>
+                          <View style={styles.tplHead}>
+                            <ThemedText type="cardTitle" themeColor="brand">
+                              {formatDuration(t.durationMin)}
+                            </ThemedText>
+                            <Ionicons name="repeat" size={16} color={Palette.onyx} />
+                          </View>
+                          <ThemedText type="small" numberOfLines={2}>
+                            {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
+                          </ThemedText>
+                          {(partnerLabel || t.venueName) ? (
+                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                              {[partnerLabel, t.venueName].filter(Boolean).join(' · ')}
+                            </ThemedText>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              ) : null}
+
+              {/* Recherche : filtre exos + coups, les chips se réorganisent tout seuls (flex-wrap). */}
+              <View style={[styles.searchWrap, templates.length && !workQ ? { marginTop: Spacing.four } : null]}>
+                <Ionicons name="search" size={18} color={Palette.grey} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Rechercher un exercice ou un coup"
+                  placeholderTextColor={Palette.grey}
+                  value={workQuery}
+                  onChangeText={setWorkQuery}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {workQuery.length > 0 ? (
+                  <Pressable onPress={() => setWorkQuery('')} hitSlop={10}>
+                    <Ionicons name="close-circle" size={18} color={Palette.grey} />
+                  </Pressable>
+                ) : null}
+              </View>
+
+              {exerciseResults.length > 0 ? (
+                <>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                    EXERCICES
+                  </ThemedText>
+                  <View style={styles.wrap}>
+                    {exerciseResults.map((s) => (
+                      <Chip key={s} label={s} active={strokes.includes(s)} onPress={() => toggleStroke(s)} color={Palette.ink2} />
+                    ))}
+                  </View>
+                </>
+              ) : null}
+
+              {strokeResults.length > 0 ? (
+                <>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                    COUPS TECHNIQUES
+                  </ThemedText>
+                  <View style={styles.wrap}>
+                    {strokeResults.map((s) => (
+                      <Chip key={s} label={s} active={strokes.includes(s)} onPress={() => toggleStroke(s)} color={Palette.purple} />
+                    ))}
+                  </View>
+                  {!workQ && STROKES.length > STROKES_PREVIEW_COUNT ? (
+                    <Pressable style={styles.seeAll} onPress={() => setShowAllStrokes((v) => !v)} hitSlop={8}>
+                      <ThemedText type="smallBold" themeColor="brand">
+                        {showAllStrokes ? 'Voir moins' : 'Voir tout'}
                       </ThemedText>
-                      {(partnerLabel || t.venueName) ? (
-                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                          {[partnerLabel, t.venueName].filter(Boolean).join(' · ')}
-                        </ThemedText>
-                      ) : null}
+                      <Ionicons
+                        name={showAllStrokes ? 'chevron-up' : 'chevron-down'}
+                        size={16}
+                        color={Palette.onyx}
+                      />
                     </Pressable>
-                  );
-                })}
-              </ScrollView>
+                  ) : null}
+                </>
+              ) : null}
+
+              {workQ && exerciseResults.length === 0 && strokeResults.length === 0 ? (
+                <View style={styles.workEmpty}>
+                  <Ionicons name="search-outline" size={24} color={Palette.grey} />
+                  <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+                    Aucun exercice ni coup pour « {workQuery.trim()} ». Essaie un autre mot.
+                  </ThemedText>
+                </View>
+              ) : null}
             </>
           ) : null}
 
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            COUPS TRAVAILLÉS
-          </ThemedText>
-          <View style={styles.wrap}>
-            {(showAllStrokes
-              ? STROKES
-              : STROKES.filter((s, i) => i < STROKES_PREVIEW_COUNT || strokes.includes(s))
-            ).map((s) => (
-              <Chip key={s} label={s} active={strokes.includes(s)} onPress={() => toggleStroke(s)} color={Palette.purple} />
-            ))}
-          </View>
-          {STROKES.length > STROKES_PREVIEW_COUNT ? (
-            <Pressable style={styles.seeAll} onPress={() => setShowAllStrokes((v) => !v)} hitSlop={8}>
-              <ThemedText type="smallBold" themeColor="brand">
-                {showAllStrokes ? 'Voir moins' : 'Voir tout'}
-              </ThemedText>
-              <Ionicons
-                name={showAllStrokes ? 'chevron-up' : 'chevron-down'}
-                size={16}
-                color={Palette.evergreen}
-              />
-            </Pressable>
+          {step === STEP.DURATION ? (
+            <>
+              <View style={styles.durRow}>
+                <ThemedText type="smallBold" themeColor="textSecondary">
+                  DURÉE
+                </ThemedText>
+                <ThemedText type="cardTitle" themeColor="brand">
+                  {formatDuration(duration)}
+                </ThemedText>
+              </View>
+              <DurationSlider value={duration} onChange={setDuration} />
+              <View style={styles.durScale}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {formatDuration(DUR_MIN)}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {formatDuration(DUR_MAX)}
+                </ThemedText>
+              </View>
+            </>
           ) : null}
 
-          <View style={styles.durRow}>
-            <ThemedText type="smallBold" themeColor="textSecondary">
-              DURÉE
-            </ThemedText>
-            <ThemedText type="cardTitle" themeColor="brand">
-              {formatDuration(duration)}
-            </ThemedText>
-          </View>
-          <DurationSlider value={duration} onChange={setDuration} />
-          <View style={styles.durScale}>
-            <ThemedText type="small" themeColor="textSecondary">
-              {formatDuration(DUR_MIN)}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {formatDuration(DUR_MAX)}
-            </ThemedText>
-          </View>
-
-          <Pressable style={styles.soloRow} onPress={() => setIsSolo((v) => !v)}>
-            <ThemedText type="cardTitle">Session seul</ThemedText>
-            <View style={[styles.checkbox, isSolo && styles.checkboxOn]}>
-              {isSolo ? <Ionicons name="checkmark" size={16} color={Palette.whitePP} /> : null}
+          {step === STEP.FEELING ? (
+            <View style={styles.feelingWrap}>
+              <FeelingScale value={feeling} onChange={(f) => setFeeling(feeling === f ? null : f)} />
             </View>
-          </Pressable>
+          ) : null}
 
-          {!isSolo ? (
+          {step === STEP.MORE ? (
             <>
-              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-                PARTENAIRE
+              {/* ── Où as-tu joué ? ── */}
+              <ThemedText type="smallBold" themeColor="textSecondary" style={[styles.lbl, { marginTop: 0 }]}>
+                OÙ AS-TU JOUÉ ?
               </ThemedText>
-              {partnerPlayer ? (
+              {venue || customVenue ? (
                 <View style={styles.selectedVenue}>
-                  <Avatar name={partnerPlayer.name} uri={partnerPlayer.avatarUrl} size={28} />
+                  <Ionicons name={customVenue ? 'flag' : 'location'} size={16} color={Palette.onyx} />
                   <ThemedText type="cardTitle" style={{ flex: 1 }} numberOfLines={1}>
-                    {partnerPlayer.name}
+                    {venue?.name ?? customVenue}
                   </ThemedText>
-                  <Pressable onPress={() => setPartnerPlayer(null)} hitSlop={8}>
+                  <Pressable
+                    onPress={() => {
+                      setVenue(null);
+                      setCustomVenue(null);
+                    }}
+                    hitSlop={8}>
                     <Ionicons name="close-circle" size={20} color={Palette.grey} />
                   </Pressable>
                 </View>
               ) : (
                 <>
+                  <Pressable style={styles.locBtn} onPress={useMyLocation} disabled={locating}>
+                    {locating ? (
+                      <ActivityIndicator size="small" color={Palette.onyx} />
+                    ) : (
+                      <Ionicons name="locate" size={18} color={Palette.onyx} />
+                    )}
+                    <ThemedText type="smallBold" themeColor="brand">
+                      {locating ? 'Localisation…' : 'Me localiser'}
+                    </ThemedText>
+                  </Pressable>
                   <TextInput
                     style={styles.search}
-                    placeholder="Rechercher un joueur Ping Pang Paris"
+                    placeholder="Rechercher un lieu (optionnel)"
+                    placeholderTextColor={Palette.grey}
+                    value={query}
+                    onChangeText={setQuery}
+                  />
+                  {matches.map(({ venue: v, distanceKm: d }) => (
+                    <Pressable
+                      key={v.id}
+                      style={styles.match}
+                      onPress={() => {
+                        setVenue(v);
+                        setQuery('');
+                      }}>
+                      <Ionicons name={v.indoor ? 'home' : 'sunny'} size={16} color={Palette.grey} />
+                      <ThemedText type="default" style={{ flex: 1 }} numberOfLines={1}>
+                        {v.name}
+                      </ThemedText>
+                      {d != null ? (
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`}
+                        </ThemedText>
+                      ) : null}
+                    </Pressable>
+                  ))}
+                  {query.trim() && matches.length === 0 ? (
+                    <Pressable
+                      style={styles.match}
+                      onPress={() => {
+                        setCustomVenue(query.trim());
+                        setQuery('');
+                      }}>
+                      <Ionicons name="add-circle-outline" size={16} color={Palette.onyx} />
+                      <ThemedText type="default" style={{ flex: 1 }} numberOfLines={1}>
+                        Utiliser « {query.trim()} »
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Nouveau lieu
+                      </ThemedText>
+                    </Pressable>
+                  ) : null}
+                </>
+              )}
+
+              {/* ── Avec qui ? ── */}
+              <Pressable style={[styles.soloRow, { marginTop: Spacing.four }]} onPress={() => setIsSolo((v) => !v)}>
+                <ThemedText type="cardTitle">Session seul</ThemedText>
+                <View style={[styles.checkbox, isSolo && styles.checkboxOn]}>
+                  {isSolo ? <Ionicons name="checkmark" size={16} color={Palette.whitePP} /> : null}
+                </View>
+              </Pressable>
+
+              {!isSolo ? (
+                <>
+                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                    TAG TON/TES PARTENAIRE(S)
+                  </ThemedText>
+
+                  {/* Joueurs déjà taggés : pastilles supprimables (on peut en ajouter autant qu'on veut). */}
+                  {partnerPlayers.length > 0 ? (
+                    <View style={styles.tagWrap}>
+                      {partnerPlayers.map((p) => (
+                        <View key={p.id} style={styles.tagChip}>
+                          <Avatar name={p.name} uri={p.avatarUrl} size={22} />
+                          <ThemedText type="smallBold" numberOfLines={1} style={styles.tagChipTxt}>
+                            {p.name}
+                          </ThemedText>
+                          <Pressable onPress={() => removePartnerPlayer(p.id)} hitSlop={8}>
+                            <Ionicons name="close-circle" size={18} color={Palette.grey} />
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  <TextInput
+                    style={[styles.search, partnerPlayers.length > 0 && { marginTop: Spacing.two }]}
+                    placeholder={
+                      partnerPlayers.length ? 'Ajouter un autre joueur' : 'Rechercher un joueur Ping Pang Paris'
+                    }
                     placeholderTextColor={Palette.grey}
                     value={partnerQuery}
                     onChangeText={setPartnerQuery}
                   />
                   {partnerMatches.map((c) => (
-                    <Pressable key={c.id} style={styles.match} onPress={() => selectPartnerPlayer(c)}>
+                    <Pressable key={c.id} style={styles.match} onPress={() => addPartnerPlayer(c)}>
                       <Avatar name={c.name} uri={c.avatarUrl} size={28} />
                       <ThemedText type="default" style={{ flex: 1 }} numberOfLines={1}>
                         {c.name}
@@ -451,195 +688,127 @@ export default function NewTrainingScreen() {
                       ) : null}
                     </Pressable>
                   ))}
+
+                  {/* Repli niveau/ELO : uniquement tant qu'aucun vrai joueur n'est taggé. */}
+                  {partnerPlayers.length === 0 ? (
+                    <>
+                      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                        OU JUSTE LE NIVEAU
+                      </ThemedText>
+                      <View style={styles.wrap}>
+                        {PARTNER_LEVELS.map((p) => (
+                          <Chip
+                            key={p}
+                            label={p}
+                            active={partner === p}
+                            onPress={() => {
+                              setPartner(partner === p ? null : p);
+                              setPartnerElo(''); // niveau et ELO sont exclusifs
+                            }}
+                            color={Palette.lime}
+                          />
+                        ))}
+                      </View>
+                      <TextInput
+                        style={[styles.search, { marginTop: Spacing.two }]}
+                        placeholder="Ou son ELO précis (ex : 1450)"
+                        placeholderTextColor={Palette.grey}
+                        value={partnerElo}
+                        onChangeText={(t) => {
+                          setPartnerElo(t.replace(/[^0-9]/g, ''));
+                          setPartner(null); // un ELO saisi prime sur les niveaux génériques
+                        }}
+                        keyboardType="number-pad"
+                        maxLength={4}
+                      />
+                    </>
+                  ) : null}
                 </>
+              ) : null}
+
+              {/* ── Match d'entraînement ? (stocké pour les stats de saison, pas dans le feed) ── */}
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                TU AS FAIT UN MATCH D’ENTRAÎNEMENT ?
+              </ThemedText>
+              <View style={styles.wrap}>
+                <Chip label="Oui" active={hadMatch} onPress={() => setHadMatch(true)} grow color={Palette.lime} />
+                <Chip label="Non" active={!hadMatch} onPress={() => setHadMatch(false)} grow color={Palette.lime} />
+              </View>
+
+              {/* ── Photo souvenir ── */}
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                RAJOUTE UNE PHOTO SOUVENIR (OPTIONNEL · {MAX_SESSION_PHOTOS} MAX)
+              </ThemedText>
+              {photos.length ? (
+                <View style={styles.photoGrid}>
+                  {photos.map((uri, i) => (
+                    <View key={uri} style={styles.photoThumbWrap}>
+                      <Image source={{ uri }} style={styles.photoThumb} contentFit="cover" />
+                      <Pressable
+                        style={styles.photoRemove}
+                        onPress={() => setPhotos((cur) => cur.filter((_, j) => j !== i))}
+                        hitSlop={8}>
+                        <Ionicons name="close-circle" size={24} color={Palette.whitePP} />
+                      </Pressable>
+                    </View>
+                  ))}
+                  {photos.length < MAX_SESSION_PHOTOS ? (
+                    <Pressable style={styles.photoAddTile} onPress={pickPhoto}>
+                      <Ionicons name="add" size={28} color={Palette.onyx} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : (
+                <Pressable style={styles.photoAdd} onPress={pickPhoto}>
+                  <Ionicons name="camera-outline" size={22} color={Palette.onyx} />
+                  <ThemedText type="smallBold" themeColor="brand">
+                    Ajouter une photo
+                  </ThemedText>
+                </Pressable>
               )}
 
-              {!partnerPlayer ? (
-                <>
-                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-                    OU JUSTE LE NIVEAU
-                  </ThemedText>
-                  <View style={styles.wrap}>
-                    {PARTNER_LEVELS.map((p) => (
-                      <Chip
-                        key={p}
-                        label={p}
-                        active={partner === p}
-                        onPress={() => {
-                          setPartner(partner === p ? null : p);
-                          setPartnerElo(''); // niveau et ELO sont exclusifs
-                        }}
-                        color={Palette.lime}
-                      />
-                    ))}
-                  </View>
-                  <TextInput
-                    style={[styles.search, { marginTop: Spacing.two }]}
-                    placeholder="Ou son ELO précis (ex : 1450)"
-                    placeholderTextColor={Palette.grey}
-                    value={partnerElo}
-                    onChangeText={(t) => {
-                      setPartnerElo(t.replace(/[^0-9]/g, ''));
-                      setPartner(null); // un ELO saisi prime sur les niveaux génériques
-                    }}
-                    keyboardType="number-pad"
-                    maxLength={4}
-                  />
-                </>
-              ) : null}
+              {/* Récap rapide avant l'envoi (tout reste modifiable via la flèche retour). */}
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                RÉCAP
+              </ThemedText>
+              <View style={styles.recap}>
+                <ThemedText type="small" numberOfLines={2}>
+                  {strokes.length ? strokes.join(', ') : 'Séance'}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {[
+                    formatDuration(duration),
+                    isSolo
+                      ? 'Solo'
+                      : partnerPlayers.length
+                        ? partnerPlayers.map((p) => p.name).join(', ')
+                        : partnerElo
+                          ? `ELO ${partnerElo}`
+                          : partner,
+                    venue?.name ?? customVenue ?? null,
+                    feeling,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </ThemedText>
+              </View>
             </>
           ) : null}
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            LIEU
-          </ThemedText>
-          {venue || customVenue ? (
-            <View style={styles.selectedVenue}>
-              <Ionicons name={customVenue ? 'flag' : 'location'} size={16} color={Palette.evergreen} />
-              <ThemedText type="cardTitle" style={{ flex: 1 }} numberOfLines={1}>
-                {venue?.name ?? customVenue}
-              </ThemedText>
-              <Pressable
-                onPress={() => {
-                  setVenue(null);
-                  setCustomVenue(null);
-                }}
-                hitSlop={8}>
-                <Ionicons name="close-circle" size={20} color={Palette.grey} />
-              </Pressable>
-            </View>
-          ) : (
-            <>
-              <Pressable style={styles.locBtn} onPress={useMyLocation} disabled={locating}>
-                {locating ? (
-                  <ActivityIndicator size="small" color={Palette.evergreen} />
-                ) : (
-                  <Ionicons name="locate" size={18} color={Palette.evergreen} />
-                )}
-                <ThemedText type="smallBold" themeColor="brand">
-                  {locating ? 'Localisation…' : 'Utiliser ma position'}
-                </ThemedText>
-              </Pressable>
-              <TextInput
-                style={styles.search}
-                placeholder="Rechercher un lieu (optionnel)"
-                placeholderTextColor={Palette.grey}
-                value={query}
-                onChangeText={setQuery}
-              />
-              {matches.map(({ venue: v, distanceKm: d }) => (
-                <Pressable
-                  key={v.id}
-                  style={styles.match}
-                  onPress={() => {
-                    setVenue(v);
-                    setQuery('');
-                  }}>
-                  <Ionicons name={v.indoor ? 'home' : 'sunny'} size={16} color={Palette.grey} />
-                  <ThemedText type="default" style={{ flex: 1 }} numberOfLines={1}>
-                    {v.name}
-                  </ThemedText>
-                  {d != null ? (
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`}
-                    </ThemedText>
-                  ) : null}
-                </Pressable>
-              ))}
-              {query.trim() && matches.length === 0 ? (
-                <Pressable
-                  style={styles.match}
-                  onPress={() => {
-                    setCustomVenue(query.trim());
-                    setQuery('');
-                  }}>
-                  <Ionicons name="add-circle-outline" size={16} color={Palette.evergreen} />
-                  <ThemedText type="default" style={{ flex: 1 }} numberOfLines={1}>
-                    Utiliser « {query.trim()} »
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Nouveau lieu
-                  </ThemedText>
-                </Pressable>
-              ) : null}
-            </>
-          )}
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            FEELING SUR LA SÉANCE
-          </ThemedText>
-          <View style={styles.row}>
-            {FEELINGS.map((f) => {
-              const active = feeling === f;
-              return (
-                <Pressable
-                  key={f}
-                  onPress={() => setFeeling(active ? null : f)}
-                  style={[styles.feelChip, active ? styles.feelChipOn : styles.chipIdle]}>
-                  <ThemedText type="default" style={styles.feelEmoji}>
-                    {FEELING_EMOJI[f] ?? '🏓'}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor={active ? 'onBrand' : 'textSecondary'} numberOfLines={1} style={styles.feelLbl}>
-                    {f}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            TES SENSATIONS
-          </ThemedText>
-          <TextInput
-            style={styles.note}
-            placeholder="Ex : bon contrôle, le revers progresse..."
-            placeholderTextColor={Palette.grey}
-            value={note}
-            onChangeText={setNote}
-            multiline
-          />
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            PHOTOS (OPTIONNEL · {MAX_SESSION_PHOTOS} MAX)
-          </ThemedText>
-          {photos.length ? (
-            <View style={styles.photoGrid}>
-              {photos.map((uri, i) => (
-                <View key={uri} style={styles.photoThumbWrap}>
-                  <Image source={{ uri }} style={styles.photoThumb} contentFit="cover" />
-                  <Pressable
-                    style={styles.photoRemove}
-                    onPress={() => setPhotos((cur) => cur.filter((_, j) => j !== i))}
-                    hitSlop={8}>
-                    <Ionicons name="close-circle" size={24} color={Palette.whitePP} />
-                  </Pressable>
-                </View>
-              ))}
-              {photos.length < MAX_SESSION_PHOTOS ? (
-                <Pressable style={styles.photoAddTile} onPress={pickPhoto}>
-                  <Ionicons name="add" size={28} color={Palette.evergreen} />
-                </Pressable>
-              ) : null}
-            </View>
-          ) : (
-            <Pressable style={styles.photoAdd} onPress={pickPhoto}>
-              <Ionicons name="camera-outline" size={22} color={Palette.evergreen} />
-              <ThemedText type="smallBold" themeColor="brand">
-                Ajouter des photos
-              </ThemedText>
-            </Pressable>
-          )}
         </ScrollView>
 
-        <Pressable style={[styles.submit, busy && { opacity: 0.6 }]} disabled={busy} onPress={save}>
+        <Pressable
+          style={[styles.submit, (busy || !canNext) && { opacity: 0.6 }]}
+          disabled={busy || !canNext}
+          onPress={next}>
           {busy ? (
             <ActivityIndicator color={Palette.whitePP} />
           ) : (
             <ThemedText type="cardTitle" themeColor="onBrand">
-              Enregistrer la séance
+              {isLast ? 'Enregistrer la séance' : 'Continuer'}
             </ThemedText>
           )}
         </Pressable>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
   );
@@ -651,7 +820,7 @@ function Chip({
   onPress,
   grow,
   compact,
-  color = Palette.evergreen,
+  color = Palette.ink2,
 }: {
   label: string;
   active: boolean;
@@ -670,12 +839,44 @@ function Chip({
       ]}>
       <ThemedText
         type="smallBold"
-        themeColor={active && color === Palette.evergreen ? 'onBrand' : 'text'}
+        themeColor={active && color === Palette.ink2 ? 'onBrand' : 'text'}
         numberOfLines={1}
         style={compact && styles.chipTextCompact}>
         {label}
       </ThemedText>
     </Pressable>
+  );
+}
+
+// Échelle de ressenti horizontale : le pattern éprouvé « rate your session » (une rangée
+// d'emojis + libellé, du plus dur au meilleur, tap unique). Recommandé vs jauge custom :
+// lecture instantanée, labels qui lèvent l'ambiguïté (cf. UX research emoji surveys).
+// Data-agnostique : la valeur stockée reste l'un des 4 FEELINGS ; ré-appuyer désélectionne.
+function FeelingScale({ value, onChange }: { value: string | null; onChange: (f: string) => void }) {
+  return (
+    <View style={styles.scaleRow}>
+      {FEELINGS.map((f) => {
+        const meta = FEELING_STYLE[f];
+        const on = value === f;
+        return (
+          <Pressable
+            key={f}
+            onPress={() => onChange(f)}
+            hitSlop={4}
+            style={[styles.scaleItem, on && { backgroundColor: meta.tint, borderColor: meta.color }]}>
+            <ThemedText style={[styles.scaleEmoji, on && styles.scaleEmojiOn]}>{meta.emoji}</ThemedText>
+            <ThemedText
+              type="smallBold"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+              style={[styles.scaleLabel, { color: on ? meta.ink : Palette.grey }]}>
+              {f}
+            </ThemedText>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -745,8 +946,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
   },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  progressTrack: {
+    height: 4,
+    borderRadius: 2,
+    marginHorizontal: Spacing.four,
+    backgroundColor: Palette.border,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 4, borderRadius: 2, backgroundColor: Palette.onyx },
+  question: { marginTop: Spacing.four },
+  questionSub: { marginTop: Spacing.one, marginBottom: Spacing.three },
+  recap: {
+    gap: Spacing.one,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    padding: Spacing.three,
+  },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.five },
   lbl: { marginTop: Spacing.four, marginBottom: Spacing.two },
+  descNote: {
+    minHeight: 160,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    padding: Spacing.three,
+    color: Palette.onyx,
+    fontFamily: 'OpenSauceOne-Regular',
+    fontSize: 18,
+    lineHeight: 26,
+    textAlignVertical: 'top',
+  },
   durRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -762,7 +995,7 @@ const styles = StyleSheet.create({
     backgroundColor: Palette.border,
     overflow: 'hidden',
   },
-  sliderFill: { height: 6, borderRadius: 3, backgroundColor: Palette.evergreen },
+  sliderFill: { height: 6, borderRadius: 3, backgroundColor: Palette.onyx },
   sliderThumb: {
     position: 'absolute',
     width: 26,
@@ -770,14 +1003,31 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: Palette.whitePP,
     borderWidth: 3,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.onyx,
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  row: { flexDirection: 'row', gap: Spacing.two },
+  feelingWrap: { marginTop: Spacing.five },
+  scaleRow: { flexDirection: 'row', gap: Spacing.two },
+  scaleItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.one,
+    minHeight: 100,
+    borderRadius: Radius.md,
+    backgroundColor: Palette.white,
+    borderWidth: 1.5,
+    borderColor: Palette.border,
+  },
+  scaleEmoji: { fontSize: 36, lineHeight: 44 },
+  scaleEmojiOn: { transform: [{ scale: 1.12 }] },
+  scaleLabel: { textAlign: 'center' },
   tplRow: { gap: Spacing.two, paddingRight: Spacing.four },
   tplCard: {
     width: 168,
@@ -798,6 +1048,25 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.one,
   },
   wrap: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    height: 48,
+    borderRadius: Radius.sm,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    paddingHorizontal: Spacing.three,
+  },
+  searchInput: {
+    flex: 1,
+    color: Palette.onyx,
+    fontFamily: 'OpenSauceOne-Regular',
+    fontSize: 15,
+    paddingVertical: 0,
+  },
+  workEmpty: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.five },
   chip: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
@@ -807,17 +1076,6 @@ const styles = StyleSheet.create({
   },
   chipIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   chipTextCompact: { fontSize: 12 },
-  feelChip: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.half,
-    paddingVertical: Spacing.three,
-    borderRadius: Radius.xs,
-  },
-  feelChipOn: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
-  feelEmoji: { fontSize: 26, lineHeight: 32 },
-  feelLbl: { fontSize: 11 },
   locBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -827,7 +1085,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
     borderRadius: Radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
     borderStyle: 'dashed',
   },
   search: {
@@ -858,6 +1116,20 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
   },
+  tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  tagChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingLeft: Spacing.one,
+    paddingRight: Spacing.two,
+    paddingVertical: Spacing.one,
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+  },
+  tagChipTxt: { maxWidth: 150 },
   selectedVenue: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -873,7 +1145,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: Spacing.four,
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
@@ -890,19 +1161,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxOn: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
-  note: {
-    minHeight: 88,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    padding: Spacing.three,
-    color: Palette.onyx,
-    fontFamily: 'OpenSauceOne-Regular',
-    fontSize: 15,
-    textAlignVertical: 'top',
-  },
+  checkboxOn: { backgroundColor: Palette.onyx, borderColor: Palette.onyx },
   photoAdd: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -911,7 +1170,7 @@ const styles = StyleSheet.create({
     height: 88,
     borderRadius: Radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
     borderStyle: 'dashed',
   },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
@@ -923,7 +1182,7 @@ const styles = StyleSheet.create({
     height: 96,
     borderRadius: Radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
@@ -932,7 +1191,7 @@ const styles = StyleSheet.create({
     margin: Spacing.four,
     height: 56,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

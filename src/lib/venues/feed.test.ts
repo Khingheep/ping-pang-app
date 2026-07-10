@@ -14,6 +14,7 @@ function slot(o: Partial<Slot> & { id: string; venueId: string; startsAt: string
     venueLng: o.venueLng ?? null,
     hostId: o.hostId ?? 'h',
     hostName: o.hostName ?? 'Host',
+    hostAvatar: o.hostAvatar ?? null,
     startsAt: o.startsAt,
     endsAt: o.endsAt ?? o.startsAt,
     format: o.format ?? '3sets',

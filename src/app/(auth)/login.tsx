@@ -128,6 +128,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   btn: { height: 54, borderRadius: Radius.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
-  btnPrimary: { backgroundColor: Palette.evergreen },
+  btnPrimary: { backgroundColor: Palette.onyx },
   toggle: { textAlign: 'center' },
 });

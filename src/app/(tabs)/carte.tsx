@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { VenueCard } from '@/components/venue-card';
-import { VenueMap, type MapPoint, type VenueMapHandle } from '@/components/venue-map';
+import { VenueMap, type Bbox, type MapPoint, type VenueMapHandle } from '@/components/venue-map';
 import { VenueSheet } from '@/components/venue-sheet';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -28,7 +28,7 @@ import { useHomeVenue } from '@/lib/players/profile';
 import { useRefreshOnFocus } from '@/lib/query/use-refresh-on-focus';
 import { useUpcomingSlots } from '@/lib/slots/slots';
 import { buildDiscover, buildVenueFeed, filterSlotsByPlace, type PlaceFilter, type VenueFeedEntry } from '@/lib/venues/feed';
-import { useFeaturedVenues } from '@/lib/venues/venues';
+import { useVenuesInBbox } from '@/lib/venues/venues';
 
 const MAP_H = Math.round(Dimensions.get('window').height * 0.36);
 
@@ -47,14 +47,15 @@ export default function PartiesScreen() {
 
   const [place, setPlace] = useState<PlaceFilter>('all');
   const [selected, setSelected] = useState<string | null>(null);
+  const [bbox, setBbox] = useState<Bbox | null>(null);
 
   const slotsQ = useUpcomingSlots(200);
   const homeQ = useHomeVenue(myId);
-  const featuredQ = useFeaturedVenues();
+  // Lieux du cadre visible (curatés + tables OSM) : rechargés à chaque déplacement de carte.
+  const venuesQ = useVenuesInBbox(bbox);
 
   useRefreshOnFocus(slotsQ.refetch);
   useRefreshOnFocus(homeQ.refetch);
-  useRefreshOnFocus(featuredQ.refetch);
 
   const homeVenue = homeQ.data ?? null;
 
@@ -64,24 +65,37 @@ export default function PartiesScreen() {
     [slotsQ.data, place, coords],
   );
 
-  // « Autour de toi » : clubs curatés sans créneau ouvert, filtrés par lieu, triés par distance.
-  const discover = useMemo(() => {
-    const featured = (featuredQ.data ?? []).filter((v) =>
-      place === 'all' ? true : place === 'indoor' ? !!v.indoor : !v.indoor,
-    );
-    return buildDiscover(featured, coords, new Set(feed.map((f) => f.id)), 8);
-  }, [featuredQ.data, place, coords, feed]);
+  // Lieux visibles filtrés intérieur/extérieur (curatés + OSM du cadre courant).
+  const bboxVenues = useMemo(
+    () =>
+      (venuesQ.data ?? []).filter((v) => (place === 'all' ? true : place === 'indoor' ? !!v.indoor : !v.indoor)),
+    [venuesQ.data, place],
+  );
 
-  // Pins de la carte = exactement ce que montre la liste (feed + clubs à découvrir).
+  // « Autour de toi » (liste) : uniquement les CLUBS proches (les tables OSM ext. restent
+  // un élément de carte, pas de liste — hiérarchisation demandée).
+  const discover = useMemo(
+    () =>
+      buildDiscover(
+        bboxVenues.filter((v) => v.source !== 'openstreetmap'),
+        coords,
+        new Set(feed.map((f) => f.id)),
+        30,
+      ),
+    [bboxVenues, coords, feed],
+  );
+
+  // Pins de la carte = TOUT ce qui est dans le cadre visible : réservables (feed) + tous les lieux.
   const points = useMemo<MapPoint[]>(() => {
+    const feedIds = new Set(feed.map((f) => f.id));
     const fromFeed: MapPoint[] = feed
       .filter((f) => f.lat != null && f.lng != null)
       .map((f) => ({ id: f.id, lat: f.lat as number, lng: f.lng as number, name: f.name, address: f.address, indoor: f.indoor, slots: f.slots.length }));
-    const fromDiscover: MapPoint[] = discover
-      .filter((d) => d.lat != null && d.lng != null)
-      .map((d) => ({ id: d.id, lat: d.lat as number, lng: d.lng as number, name: d.name, address: d.address, indoor: d.indoor, slots: 0 }));
-    return [...fromFeed, ...fromDiscover];
-  }, [feed, discover]);
+    const fromVenues: MapPoint[] = bboxVenues
+      .filter((v) => v.lat != null && v.lng != null && !feedIds.has(v.id))
+      .map((v) => ({ id: v.id, lat: v.lat as number, lng: v.lng as number, name: v.name, address: v.address, indoor: v.indoor, slots: 0 }));
+    return [...fromFeed, ...fromVenues];
+  }, [feed, bboxVenues]);
 
   // Sélection (carte ou liste) : on ouvre la sheet et on recadre la carte sur le lieu.
   const select = useCallback((id: string, lat?: number | null, lng?: number | null) => {
@@ -119,10 +133,16 @@ export default function PartiesScreen() {
     <View style={styles.root}>
       {/* Carte de base, toujours ouverte */}
       <View style={[styles.mapWrap, { height: MAP_H + insets.top, paddingTop: insets.top }]}>
-        <VenueMap ref={mapRef} points={points} user={coords} onSelectVenue={(id) => select(id, undefined, undefined)} />
+        <VenueMap
+          ref={mapRef}
+          points={points}
+          user={coords}
+          onSelectVenue={(id) => select(id, undefined, undefined)}
+          onBoundsChange={setBbox}
+        />
 
         <Pressable style={[styles.clubChip, { top: insets.top + Spacing.two }]} onPress={goToClub} hitSlop={6}>
-          <Ionicons name={homeVenue ? 'home' : 'add-circle-outline'} size={16} color={Palette.evergreen} />
+          <Ionicons name={homeVenue ? 'home' : 'add-circle-outline'} size={16} color={Palette.onyx} />
           <ThemedText type="smallBold" themeColor="brand" numberOfLines={1} style={styles.clubChipText}>
             {homeVenue ? homeVenue.name : 'Définir mon club'}
           </ThemedText>
@@ -130,15 +150,25 @@ export default function PartiesScreen() {
 
         {coords ? (
           <Pressable style={styles.locate} onPress={() => mapRef.current?.flyTo(coords.lat, coords.lng, 15)} hitSlop={8}>
-            <Ionicons name="locate" size={20} color={Palette.evergreen} />
+            <Ionicons name="locate" size={20} color={Palette.onyx} />
           </Pressable>
         ) : null}
       </View>
 
-      {/* Feed, sous la carte (coins arrondis qui chevauchent légèrement) */}
+      {/* Panneau bas : détail du lieu au tap d'un pin (mise à jour en place), sinon le feed. */}
       <View style={styles.sheet}>
-        <FlatList
-          data={feed}
+        {selected ? (
+          <VenueSheet
+            embedded
+            venueId={selected}
+            onClose={() => {
+              setSelected(null);
+              void slotsQ.refetch();
+            }}
+          />
+        ) : (
+          <FlatList
+            data={feed}
           keyExtractor={(it) => it.id}
           renderItem={renderCard}
           contentContainerStyle={styles.listContent}
@@ -146,7 +176,7 @@ export default function PartiesScreen() {
           refreshing={slotsQ.isFetching}
           onRefresh={() => {
             void slotsQ.refetch();
-            void featuredQ.refetch();
+            void venuesQ.refetch();
           }}
           ListHeaderComponent={
             <View style={styles.header}>
@@ -164,7 +194,7 @@ export default function PartiesScreen() {
                   const active = place === f.key;
                   return (
                     <Pressable key={f.key} style={[styles.filterChip, active && styles.filterChipOn]} onPress={() => setPlace(f.key)} hitSlop={4}>
-                      <ThemedText type="smallBold" themeColor={active ? 'onBrand' : 'brand'}>
+                      <ThemedText type="smallBold" themeColor={active ? 'onBrand' : 'textSecondary'}>
                         {f.label}
                       </ThemedText>
                     </Pressable>
@@ -207,16 +237,9 @@ export default function PartiesScreen() {
               </View>
             ) : null
           }
-        />
+          />
+        )}
       </View>
-
-      <VenueSheet
-        venueId={selected}
-        onClose={() => {
-          setSelected(null);
-          void slotsQ.refetch();
-        }}
-      />
     </View>
   );
 }
@@ -243,14 +266,12 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
   filters: { flexDirection: 'row', gap: Spacing.two },
   filterChip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderRadius: Radius.pill,
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
   },
-  filterChipOn: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
+  filterChipOn: { backgroundColor: Palette.ink2 },
   empty: { alignItems: 'center', paddingVertical: Spacing.six, gap: Spacing.two },
   emptyTitle: { textAlign: 'center' },
   emptyText: { textAlign: 'center', maxWidth: 280 },

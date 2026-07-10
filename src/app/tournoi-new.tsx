@@ -17,11 +17,11 @@ import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { numPoulesForPlayers } from '@/lib/tournaments/bracket';
-import { createTournament, TOURNAMENT_FORMATS, type TournamentFormat } from '@/lib/tournaments/tournaments';
+import { createTournament, TOURNAMENT_FORMATS, type TournamentFormat, type TournamentStructure } from '@/lib/tournaments/tournaments';
 import { notify } from '@/lib/ui/alert';
 
-// On ne garde que les formats réellement distincts (BO3/5/7) - WTT/Champions en étaient des doublons.
-const FORMATS: TournamentFormat[] = ['bo3', 'bo5', 'bo7'];
+// Formats réellement distincts. BO1 = match en 1 manche (formule express, ex. tournoi d'event).
+const FORMATS: TournamentFormat[] = ['bo1', 'bo3', 'bo5', 'bo7'];
 const PLAYER_MIN = 4;
 const PLAYER_MAX = 64;
 const PLAYER_STEP = 1;
@@ -39,11 +39,23 @@ function poulesPreview(n: number, qualifiers: number): string {
   return `${poulesLbl} de ~${per} → ${qualified} qualifiés`;
 }
 
+/** Aperçu du tableau direct : « Tableau à 64 · 6 tours » (+ nb d'exempts si non-puissance de 2). */
+function bracketPreview(n: number): string {
+  let size = 1;
+  while (size < n) size *= 2;
+  const rounds = Math.round(Math.log2(size));
+  const byes = size - n;
+  return `Tableau à ${size}${byes ? ` · ${byes} exempt${byes > 1 ? 's' : ''}` : ''} · ${rounds} tour${rounds > 1 ? 's' : ''}`;
+}
+
 export default function NewTournamentScreen() {
   const { session } = useAuth();
   const [name, setName] = useState('');
+  const [city, setCity] = useState('');
   const [size, setSize] = useState(8);
-  const [format, setFormat] = useState<TournamentFormat>('bo5');
+  const [format, setFormat] = useState<TournamentFormat>('bo5'); // format des poules (ou format unique en tableau direct)
+  const [bracketFormat, setBracketFormat] = useState<TournamentFormat>('bo5'); // format du tableau final
+  const [structure, setStructure] = useState<TournamentStructure>('poules');
   const [qualifiers, setQualifiers] = useState(2);
   const [ranked, setRanked] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -64,9 +76,13 @@ export default function NewTournamentScreen() {
       const t = await createTournament(me, {
         name: name.trim() || 'Mon tournoi',
         format,
+        // Tableau direct : pas de poules → un seul format (le tableau reprend `format`).
+        bracketFormat: structure === 'poules' ? bracketFormat : undefined,
         maxPlayers: size,
         qualifiersPerPoule: qualifiers,
+        structure,
         isRanked: ranked,
+        city: city.trim() || undefined,
       });
       router.replace({ pathname: '/tournoi', params: { id: t.id } });
     } catch (e) {
@@ -80,7 +96,7 @@ export default function NewTournamentScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="close" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Créer mon tournoi</ThemedText>
@@ -99,13 +115,24 @@ export default function NewTournamentScreen() {
             onChangeText={setName}
           />
 
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+            VILLE (OPTIONNEL)
+          </ThemedText>
+          <TextInput
+            style={styles.input}
+            placeholder="Ex : Paris"
+            placeholderTextColor={Palette.grey}
+            value={city}
+            onChangeText={setCity}
+          />
+
           <View style={styles.sliderHead}>
             <ThemedText type="smallBold" themeColor="textSecondary">
               NOMBRE DE JOUEURS
             </ThemedText>
             <View style={styles.stepperRow}>
               <Pressable style={styles.stepBtn} hitSlop={8} onPress={() => setSize((s) => clampSize(s - 1))}>
-                <Ionicons name="remove" size={18} color={Palette.evergreen} />
+                <Ionicons name="remove" size={18} color={Palette.onyx} />
               </Pressable>
               {editingSize ? (
                 <TextInput
@@ -133,7 +160,7 @@ export default function NewTournamentScreen() {
                 </Pressable>
               )}
               <Pressable style={styles.stepBtn} hitSlop={8} onPress={() => setSize((s) => clampSize(s + 1))}>
-                <Ionicons name="add" size={18} color={Palette.evergreen} />
+                <Ionicons name="add" size={18} color={Palette.onyx} />
               </Pressable>
             </View>
           </View>
@@ -143,7 +170,7 @@ export default function NewTournamentScreen() {
               {PLAYER_MIN}
             </ThemedText>
             <ThemedText type="small" themeColor="brand">
-              {poulesPreview(size, qualifiers)}
+              {structure === 'bracket' ? bracketPreview(size) : poulesPreview(size, qualifiers)}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
               {PLAYER_MAX}
@@ -151,33 +178,65 @@ export default function NewTournamentScreen() {
           </View>
 
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            FORMAT
+            FORMULE
           </ThemedText>
           <View style={styles.chipWrap}>
-            {FORMATS.map((f) => (
-              <Pressable key={f} onPress={() => setFormat(f)} style={[styles.chipWide, format === f ? styles.chipOn : styles.chipOff]}>
-                <ThemedText type="smallBold" themeColor={format === f ? 'onBrand' : 'text'}>
-                  {TOURNAMENT_FORMATS[f].label}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            QUALIFIÉS PAR POULE
-          </ThemedText>
-          <View style={styles.chipWrap}>
-            {QUALIFIERS.map((q) => (
-              <Pressable key={q} onPress={() => setQualifiers(q)} style={[styles.chipWide, qualifiers === q ? styles.chipOn : styles.chipOff]}>
-                <ThemedText type="smallBold" themeColor={qualifiers === q ? 'onBrand' : 'text'}>
-                  {q === 1 ? '1er' : q === 2 ? 'Top 2' : 'Top 3'}
+            {([['poules', 'Poules + tableau'], ['bracket', 'Tableau direct']] as const).map(([val, lbl]) => (
+              <Pressable
+                key={val}
+                onPress={() => setStructure(val)}
+                style={[styles.chipWide, structure === val ? styles.chipOn : styles.chipOff]}>
+                <ThemedText type="smallBold" themeColor={structure === val ? 'onBrand' : 'text'}>
+                  {lbl}
                 </ThemedText>
               </Pressable>
             ))}
           </View>
           <ThemedText type="small" themeColor="textMuted" style={{ marginTop: Spacing.one }}>
-            Nombre de joueurs qui sortent de chaque poule vers le tableau final.
+            {structure === 'bracket'
+              ? 'Élimination directe, sans poules. Têtes de série par ELO (le n°1 et le n°2 ne se croisent qu’en finale).'
+              : 'Round-robin en poules, puis tableau final avec les qualifiés.'}
           </ThemedText>
+
+          {structure === 'poules' ? (
+            <>
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                FORMAT DES POULES
+              </ThemedText>
+              <FormatRow value={format} onChange={setFormat} />
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                FORMAT DU TABLEAU FINAL
+              </ThemedText>
+              <FormatRow value={bracketFormat} onChange={setBracketFormat} />
+            </>
+          ) : (
+            <>
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                FORMAT
+              </ThemedText>
+              <FormatRow value={format} onChange={setFormat} />
+            </>
+          )}
+
+          {structure === 'poules' ? (
+            <>
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
+                QUALIFIÉS PAR POULE
+              </ThemedText>
+              <View style={styles.chipWrap}>
+                {QUALIFIERS.map((q) => (
+                  <Pressable key={q} onPress={() => setQualifiers(q)} style={[styles.chipWide, qualifiers === q ? styles.chipOn : styles.chipOff]}>
+                    <ThemedText type="smallBold" themeColor={qualifiers === q ? 'onBrand' : 'text'}>
+                      {q === 1 ? '1er' : q === 2 ? 'Top 2' : 'Top 3'}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+              <ThemedText type="small" themeColor="textMuted" style={{ marginTop: Spacing.one }}>
+                Nombre de joueurs qui sortent de chaque poule vers le tableau final.
+              </ThemedText>
+            </>
+          ) : null}
 
           <Pressable style={styles.rankedRow} onPress={() => setRanked((r) => !r)}>
             <View style={styles.rankedText}>
@@ -202,6 +261,21 @@ export default function NewTournamentScreen() {
           )}
         </Pressable>
       </SafeAreaView>
+    </View>
+  );
+}
+
+/** Rangée de chips de format (BO1/BO3/BO5/BO7) — réutilisée pour poules et tableau. */
+function FormatRow({ value, onChange }: { value: TournamentFormat; onChange: (f: TournamentFormat) => void }) {
+  return (
+    <View style={styles.chipWrap}>
+      {FORMATS.map((f) => (
+        <Pressable key={f} onPress={() => onChange(f)} style={[styles.chipWide, value === f ? styles.chipOn : styles.chipOff]}>
+          <ThemedText type="smallBold" themeColor={value === f ? 'onBrand' : 'text'}>
+            {TOURNAMENT_FORMATS[f].label}
+          </ThemedText>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -311,14 +385,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: 'OpenSauceTwo-Black',
     fontSize: 22,
-    color: Palette.evergreen,
+    color: Palette.onyx,
     paddingVertical: 0,
     paddingHorizontal: Spacing.one,
   },
   sliderScale: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.one },
   sliderHit: { height: 40, justifyContent: 'center' },
   sliderTrack: { height: 6, borderRadius: 3, backgroundColor: Palette.border, overflow: 'hidden' },
-  sliderFill: { height: 6, borderRadius: 3, backgroundColor: Palette.evergreen },
+  sliderFill: { height: 6, borderRadius: 3, backgroundColor: Palette.onyx },
   sliderThumb: {
     position: 'absolute',
     width: 26,
@@ -326,14 +400,14 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: Palette.whitePP,
     borderWidth: 3,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.onyx,
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  chipOn: { backgroundColor: Palette.evergreen },
+  chipOn: { backgroundColor: Palette.ink2 },
   chipOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   rankedRow: {
     flexDirection: 'row',
@@ -348,7 +422,7 @@ const styles = StyleSheet.create({
   },
   rankedText: { flex: 1, gap: Spacing.half },
   toggle: { width: 48, height: 28, borderRadius: 14, padding: 3, justifyContent: 'center' },
-  toggleOn: { backgroundColor: Palette.evergreen },
+  toggleOn: { backgroundColor: Palette.onyx },
   toggleOff: { backgroundColor: Palette.border },
   knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: Palette.white },
   knobOn: { alignSelf: 'flex-end' },
@@ -357,7 +431,7 @@ const styles = StyleSheet.create({
     margin: Spacing.four,
     height: 56,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

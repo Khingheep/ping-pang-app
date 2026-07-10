@@ -86,7 +86,7 @@ export default function PostMatchScreen() {
         </ScrollView>
 
         <View style={styles.actions}>
-          <Pressable style={styles.skip} onPress={() => router.back()}>
+          <Pressable style={styles.skip} onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}>
             <ThemedText type="cardTitle" themeColor="textSecondary">
               Passer
             </ThemedText>
@@ -108,7 +108,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.five, paddingBottom: Spacing.five },
   deltaCard: {
     marginTop: Spacing.four,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     borderRadius: Radius.md,
     padding: Spacing.four,
     alignItems: 'flex-start',
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  feelOn: { borderColor: Palette.evergreen, borderWidth: 2, backgroundColor: Palette.lime },
+  feelOn: { borderColor: Palette.onyx, borderWidth: 2, backgroundColor: Palette.lime },
   note: {
     minHeight: 96,
     borderRadius: Radius.sm,
@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     flex: 2,
     height: 54,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -158,7 +158,7 @@ export default function MessagesScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Messages</ThemedText>
@@ -203,7 +203,7 @@ export default function MessagesScreen() {
                   <View style={styles.main}>
                     <ThemedText type="cardTitle">{p.name}</ThemedText>
                   </View>
-                  <Ionicons name="chatbubble-outline" size={20} color={Palette.evergreen} />
+                  <Ionicons name="chatbubble-outline" size={20} color={Palette.onyx} />
                 </Pressable>
               ))
             )}
@@ -230,7 +230,7 @@ export default function MessagesScreen() {
 
             <ScrollView
               contentContainerStyle={styles.scroll}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Palette.evergreen} />}>
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Palette.onyx} />}>
               {convos.length === 0 ? (
                 <ThemedText type="small" themeColor="textMuted">
                   {showArchived
@@ -245,7 +245,7 @@ export default function MessagesScreen() {
                     onPress={() => router.push({ pathname: '/chat', params: { id: c.otherId, name: c.otherName } })}
                     onLongPress={() => setSheet(c)}
                     delayLongPress={300}>
-                    <Avatar name={c.otherName || '?'} size={48} />
+                    <Avatar name={c.otherName || '?'} uri={c.otherAvatar} size={48} />
                     <View style={styles.main}>
                       <ThemedText type="cardTitle">{c.otherName || 'Joueur'}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Radius.pill,
   },
-  segmentBtnActive: { backgroundColor: Palette.evergreen },
+  segmentBtnActive: { backgroundColor: Palette.ink2 },
   scroll: { paddingHorizontal: Spacing.four, gap: Spacing.two, paddingBottom: Spacing.six },
   row: {
     flexDirection: 'row',

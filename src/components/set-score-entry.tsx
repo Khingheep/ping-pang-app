@@ -5,11 +5,12 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
-import { isValidSet } from '@/lib/matches/sets';
+import { autofillOpponent, isValidSet } from '@/lib/matches/sets';
 
 export type SetInput = { a: string; b: string };
 
@@ -32,12 +33,47 @@ export function SetScoreEntry({
   meLabel?: string;
   oppLabel?: string;
 }) {
-  const setAt = (i: number, patch: Partial<SetInput>) =>
-    onChange(value.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
-  const add = () => onChange([...value, { a: '', b: '' }]);
-  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
-
   const onlyInt = (t: string) => t.replace(/[^0-9]/g, '').slice(0, 2);
+
+  // Cellules « 11 » remplies automatiquement (hack UX) : clé `${row}:${side}`. On les traque pour
+  // pouvoir les retirer si le perdant passe en deuce (≥ 10), sans écraser une saisie manuelle.
+  const [auto, setAuto] = useState<Record<string, boolean>>({});
+
+  /**
+   * Édite une cellule avec le petit hack UX : si on tape le score du PERDANT (0–9) et que la
+   * cellule d'en face est vide (ou déjà auto), l'adversaire passe à 11 tout seul (un joueur ≤ 9 a
+   * forcément perdu la manche 11-x). En deuce (≥ 10) ou si on vide la cellule, on retire ce 11 auto.
+   */
+  const editCell = (i: number, side: 'a' | 'b', raw: string) => {
+    const next = onlyInt(raw);
+    const opp: 'a' | 'b' = side === 'a' ? 'b' : 'a';
+    const cur = value[i];
+    const patch: Partial<SetInput> = { [side]: next };
+    const nextAuto = { ...auto };
+    delete nextAuto[`${i}:${side}`]; // on tape ici → cette cellule n'est plus « auto »
+
+    const decision = autofillOpponent(next, cur[opp], !!auto[`${i}:${opp}`]);
+    if (decision === '11') {
+      patch[opp] = '11'; // perdant clair → l'adversaire a fait 11
+      nextAuto[`${i}:${opp}`] = true;
+    } else if (decision === '') {
+      patch[opp] = ''; // deuce ou cellule vidée → on libère le 11 auto
+      delete nextAuto[`${i}:${opp}`];
+    }
+
+    setAuto(nextAuto);
+    onChange(value.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  };
+
+  // Ajout/suppression de manche : les index changent → on repart d'un état auto propre.
+  const add = () => {
+    setAuto({});
+    onChange([...value, { a: '', b: '' }]);
+  };
+  const removeAt = (i: number) => {
+    setAuto({});
+    onChange(value.filter((_, idx) => idx !== i));
+  };
 
   return (
     <View style={styles.root}>
@@ -66,7 +102,7 @@ export function SetScoreEntry({
               placeholder="0"
               placeholderTextColor={Palette.grey}
               value={s.a}
-              onChangeText={(t) => setAt(i, { a: onlyInt(t) })}
+              onChangeText={(t) => editCell(i, 'a', t)}
               maxLength={2}
             />
             <ThemedText type="subtitle" themeColor="textMuted">
@@ -78,7 +114,7 @@ export function SetScoreEntry({
               placeholder="0"
               placeholderTextColor={Palette.grey}
               value={s.b}
-              onChangeText={(t) => setAt(i, { b: onlyInt(t) })}
+              onChangeText={(t) => editCell(i, 'b', t)}
               maxLength={2}
             />
             <Pressable style={styles.del} onPress={() => removeAt(i)} hitSlop={8}>
@@ -90,7 +126,7 @@ export function SetScoreEntry({
 
       {value.length < bestOf ? (
         <Pressable style={styles.addBtn} onPress={add}>
-          <Ionicons name="add" size={18} color={Palette.evergreen} />
+          <Ionicons name="add" size={18} color={Palette.onyx} />
           <ThemedText type="smallBold" themeColor="brand">
             Ajouter une manche
           </ThemedText>
@@ -129,7 +165,7 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: Radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
     borderStyle: 'dashed',
     marginTop: Spacing.one,
   },

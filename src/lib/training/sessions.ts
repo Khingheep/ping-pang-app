@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ImageManipulator from 'expo-image-manipulator';
 
 import { qk, STALE } from '@/lib/query/keys';
@@ -27,6 +27,22 @@ export const STROKES = [
   'Défense coup droit',
   'Défense revers',
   'Top sur top',
+];
+
+/**
+ * Banque d'exercices (Paul, 07/07/2026). Enregistrés dans `strokes` au même titre
+ * que les coups : on ne couvrira jamais tous les exos possibles (les coups, si),
+ * donc chacun note ce qu'il a travaillé via son exo OU via le coup correspondant.
+ */
+export const EXERCISES_BANK = [
+  '2-2',
+  'Falkenberg',
+  '3 points',
+  'Démarrage revers',
+  'Démarrage coup droit',
+  'Revers-Milieu-Revers-Coup droit',
+  'Suédois',
+  '2-1-1-2',
 ];
 
 /** Nombre de coups affichés avant le bouton « Voir tout ». */
@@ -70,30 +86,49 @@ export async function addTrainingSession(p: {
   durationMin: number;
   strokes: string[];
   partnerLevel?: string | null;
-  partnerId?: string | null;
+  /** Partenaires taggés (vrais joueurs). Le 1ᵉʳ devient `partner_id` (principal), le reste va en table de jointure. */
+  partnerIds?: string[] | null;
   venueId?: string | null;
   venueLabel?: string | null;
   feeling?: string | null;
   note?: string | null;
   photoUrls?: string[] | null;
   isSolo?: boolean;
+  /** As-tu joué un match pendant la séance ? Stocké pour les stats de fin de saison (pas affiché dans le feed). */
+  hadMatch?: boolean;
 }): Promise<void> {
   const photos = p.photoUrls ?? [];
-  const { error } = await supabase.from('training_sessions').insert({
-    player_id: p.playerId,
-    duration_min: p.durationMin,
-    strokes: p.strokes,
-    partner_level: p.partnerLevel ?? null,
-    partner_id: p.partnerId ?? null,
-    venue_id: p.venueId ?? null,
-    venue_label: p.venueLabel ?? null,
-    feeling: p.feeling ?? null,
-    note: p.note ?? null,
-    photo_urls: photos,
-    photo_url: photos[0] ?? null, // rétrocompat : anciens clients lisent encore photo_url
-    is_solo: p.isSolo ?? false,
-  });
+  const partnerIds = [...new Set((p.partnerIds ?? []).filter(Boolean))]; // dédup, ordre de tag conservé
+  const { data, error } = await supabase
+    .from('training_sessions')
+    .insert({
+      player_id: p.playerId,
+      duration_min: p.durationMin,
+      strokes: p.strokes,
+      partner_level: p.partnerLevel ?? null,
+      partner_id: partnerIds[0] ?? null, // principal (rétrocompat feed / templates / anciens clients)
+      venue_id: p.venueId ?? null,
+      venue_label: p.venueLabel ?? null,
+      feeling: p.feeling ?? null,
+      note: p.note ?? null,
+      photo_urls: photos,
+      photo_url: photos[0] ?? null, // rétrocompat : anciens clients lisent encore photo_url
+      is_solo: p.isSolo ?? false,
+      had_match: p.hadMatch ?? false,
+    })
+    .select('id')
+    .single();
   if (error) throw error;
+
+  // Liste complète des partenaires dans la table de jointure. Best-effort : `partner_id`
+  // garde déjà le principal, donc on n'échoue pas la séance si l'insert des co-partenaires
+  // part en erreur (ex. migration 0063 pas encore déployée → seul le principal est stocké).
+  if (partnerIds.length && data) {
+    const sessionId = (data as { id: string }).id;
+    await supabase
+      .from('training_session_partners')
+      .insert(partnerIds.map((pid) => ({ session_id: sessionId, player_id: pid })));
+  }
 }
 
 /**
@@ -349,20 +384,21 @@ export function useLastTrainingSession(playerId: string | undefined) {
   });
 }
 
-/** Feed des séances (mis en cache). */
+/** Feed des séances. `limit` grandit au scroll (feed infini) → clé + keepPreviousData (pas de flash). */
 export function useSessionsFeed(myId: string | undefined, limit = 40) {
   return useQuery({
-    queryKey: qk.feed.sessions(myId ?? 'anon'),
+    queryKey: [...qk.feed.sessions(myId ?? 'anon'), limit],
     queryFn: () => fetchSessionsFeed(myId, limit),
     enabled: !!myId,
     staleTime: STALE.feed,
+    placeholderData: keepPreviousData,
   });
 }
 
 /** Like/unlike optimiste d'une séance du feed : met à jour le cache, rollback en cas d'échec. */
 export function useToggleSessionLike(myId: string) {
   const qc = useQueryClient();
-  const key = qk.feed.sessions(myId);
+  const key = qk.feed.sessions(myId); // préfixe → matche toutes les tailles [.., limit]
   return useMutation({
     mutationFn: async (item: SessionFeedItem) => {
       const liked = !item.liked;
@@ -372,15 +408,15 @@ export function useToggleSessionLike(myId: string) {
     },
     onMutate: async (item) => {
       await qc.cancelQueries({ queryKey: key });
-      const prev = qc.getQueryData<SessionFeedItem[]>(key);
+      const prev = qc.getQueriesData<SessionFeedItem[]>({ queryKey: key });
       const liked = !item.liked;
-      qc.setQueryData<SessionFeedItem[]>(key, (old) =>
+      qc.setQueriesData<SessionFeedItem[]>({ queryKey: key }, (old) =>
         (old ?? []).map((s) => (s.id === item.id ? { ...s, liked, likeCount: s.likeCount + (liked ? 1 : -1) } : s)),
       );
       return { prev };
     },
     onError: (_e, _item, ctx) => {
-      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+      for (const [k, data] of ctx?.prev ?? []) qc.setQueryData(k, data);
     },
   });
 }
@@ -431,7 +467,8 @@ export type SessionTemplate = {
   strokes: string[];
   isSolo: boolean;
   partnerLevel: string | null;
-  partner: SessionPartner | null;
+  partner: SessionPartner | null; // partenaire principal (= partners[0], rétrocompat)
+  partners: SessionPartner[]; // tous les partenaires taggés (principal en tête)
   venueId: string | null;
   venueName: string | null; // nom à afficher + repli en lieu libre si le lieu n'est plus en base
   feeling: string | null;
@@ -451,10 +488,17 @@ type TemplateRow = {
   venue_label: string | null;
 };
 
+/** Libellé court des partenaires taggés : « Alice », « Alice +2 », ou null si aucun. */
+export function partnersLabel(t: { partners: SessionPartner[] }): string | null {
+  if (!t.partners.length) return null;
+  const [first, ...rest] = t.partners;
+  return rest.length ? `${first.name} +${rest.length}` : first.name;
+}
+
 /** Signature d'une séance : deux séances « identiques » partagent la même config. */
 function templateKey(t: SessionTemplate): string {
   const strokes = [...t.strokes].sort().join(',');
-  const partner = t.partner?.id ?? t.partnerLevel ?? '';
+  const partner = t.partners.length ? t.partners.map((p) => p.id).sort().join('+') : t.partnerLevel ?? '';
   const venue = t.venueId ?? t.venueName ?? '';
   return `${t.durationMin}|${strokes}|${partner}|${venue}|${t.isSolo ? 's' : 'd'}`;
 }
@@ -477,15 +521,17 @@ export async function fetchSessionTemplates(playerId: string, limit = 3): Promis
   const out: SessionTemplate[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
+    const primary = r.partner
+      ? { id: r.partner.id, name: r.partner.display_name ?? 'Joueur', avatarUrl: r.partner.avatar_url }
+      : null;
     const t: SessionTemplate = {
       id: r.id,
       durationMin: r.duration_min,
       strokes: r.strokes ?? [],
       isSolo: r.is_solo ?? false,
       partnerLevel: r.partner_level,
-      partner: r.partner
-        ? { id: r.partner.id, name: r.partner.display_name ?? 'Joueur', avatarUrl: r.partner.avatar_url }
-        : null,
+      partner: primary,
+      partners: primary ? [primary] : [], // complété ci-dessous par la table de jointure
       venueId: r.venue_id,
       venueName: r.venues?.name ?? r.venue_label ?? null,
       feeling: r.feeling,
@@ -495,6 +541,32 @@ export async function fetchSessionTemplates(playerId: string, limit = 3): Promis
     seen.add(key);
     out.push(t);
     if (out.length >= limit) break;
+  }
+
+  // Co-partenaires (table de jointure) → liste complète pour « répéter une séance ».
+  // Best-effort : si la table 0063 n'est pas encore déployée, on garde juste le principal.
+  const ids = out.map((t) => t.id);
+  if (ids.length) {
+    type JoinRow = { session_id: string; player: { id: string; display_name: string | null; avatar_url: string | null } | null };
+    const { data: jp } = await supabase
+      .from('training_session_partners')
+      .select('session_id, player:players(id, display_name, avatar_url)')
+      .in('session_id', ids);
+    const bySession = new Map<string, SessionPartner[]>();
+    for (const row of (jp as unknown as JoinRow[] | null) ?? []) {
+      if (!row.player) continue;
+      const list = bySession.get(row.session_id) ?? [];
+      list.push({ id: row.player.id, name: row.player.display_name ?? 'Joueur', avatarUrl: row.player.avatar_url });
+      bySession.set(row.session_id, list);
+    }
+    for (const t of out) {
+      const extra = bySession.get(t.id);
+      if (!extra?.length) continue;
+      // union principal + co-partenaires, dédup par id, principal en tête
+      const byId = new Map<string, SessionPartner>();
+      for (const pp of [...t.partners, ...extra]) byId.set(pp.id, pp);
+      t.partners = [...byId.values()];
+    }
   }
   return out;
 }

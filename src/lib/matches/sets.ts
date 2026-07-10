@@ -44,6 +44,21 @@ export function flipSetScores(raw: string | null | undefined): string {
   return formatSetScores(parseSetScores(raw).map((s) => ({ a: s.b, b: s.a })));
 }
 
+/**
+ * Hack UX de saisie : quand on tape le score du PERDANT d'une manche (0–9), l'adversaire — s'il est
+ * vide — passe à 11 tout seul (un joueur ≤ 9 a forcément perdu 11-x hors deuce). Renvoie la valeur à
+ * appliquer à la cellule opposée, ou null pour « ne pas y toucher » :
+ *  - `typed` ∈ [0,9] et opposé vide (ou déjà auto-rempli) → '11' ;
+ *  - opposé auto-rempli et `typed` vidé ou ≥ 10 (deuce) → '' (on retire le 11 pour saisir le deuce) ;
+ *  - sinon → null (on ne recouvre jamais une saisie manuelle).
+ */
+export function autofillOpponent(typed: string, oppValue: string, oppWasAuto: boolean): '11' | '' | null {
+  const n = Number.parseInt(typed, 10);
+  if (typed !== '' && n >= 0 && n <= 9 && (oppValue === '' || oppWasAuto)) return '11';
+  if (oppWasAuto && (typed === '' || n >= 10)) return '';
+  return null;
+}
+
 /** Les deux points sont saisis (entiers finis ≥ 0). */
 export function isCompleteSet(s: SetScore): boolean {
   return Number.isFinite(s.a) && Number.isFinite(s.b) && s.a >= 0 && s.b >= 0;

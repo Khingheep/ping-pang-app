@@ -8,7 +8,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Dimensions, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
@@ -18,7 +18,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
 import { computeObjective, levelForElo, manualObjective, type Objective } from '@/lib/elo';
-import { fetchFfttHistory, type FfttRankingPoint } from '@/lib/fftt/link';
+import { fetchFfttByLicence, fetchFfttHistory, type FfttRankingPoint } from '@/lib/fftt/link';
 import { fetchFfttMatches, type FfttMatchView } from '@/lib/fftt/matches';
 import {
   buildEloProgression,
@@ -100,8 +100,8 @@ function ProgressCurve({ series }: { series: number[] }) {
   return (
     <Svg width={width} height={height}>
       <Path d={area} fill={Palette.lime} opacity={0.3} />
-      <Path d={line} stroke={Palette.evergreen} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx={last.x} cy={last.y} r={4.5} fill={Palette.evergreen} />
+      <Path d={line} stroke={Palette.onyx} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <Circle cx={last.x} cy={last.y} r={4.5} fill={Palette.onyx} />
     </Svg>
   );
 }
@@ -199,6 +199,10 @@ export default function ProfileScreen() {
   const [clubOpen, setClubOpen] = useState(false);
   const [clubDraft, setClubDraft] = useState<Venue | null>(null);
 
+  // Auto-réparation : mémorise la licence déjà re-synchronisée pour ne pas
+  // rappeler l'import en boucle (joueur réellement sans match officiel).
+  const ffttHealedRef = useRef<string | null>(null);
+
   const reload = useCallback(() => {
     const id = session?.user?.id;
     if (!id) return;
@@ -206,8 +210,22 @@ export default function ProfileScreen() {
     fetchMyProfile(id).then((p) => {
       setProfile(p);
       if (p?.fftt_id) {
-        fetchFfttHistory(p.fftt_id).then(setFfttHistory).catch(() => {});
-        fetchFfttMatches(p.fftt_id).then(setFfttMatches).catch(() => {});
+        const ffttId = p.fftt_id;
+        fetchFfttHistory(ffttId).then(setFfttHistory).catch(() => {});
+        fetchFfttMatches(ffttId)
+          .then((rows) => {
+            setFfttMatches(rows);
+            // Compte lié mais aucun match importé (échec d'upsert historique) →
+            // on redéclenche un import via action=player UNE fois, puis on relit.
+            if (rows.length === 0 && ffttHealedRef.current !== ffttId) {
+              ffttHealedRef.current = ffttId;
+              fetchFfttByLicence(ffttId)
+                .then(() => fetchFfttMatches(ffttId))
+                .then(setFfttMatches)
+                .catch(() => {});
+            }
+          })
+          .catch(() => {});
       } else {
         setFfttHistory([]);
         setFfttMatches([]);
@@ -221,7 +239,7 @@ export default function ProfileScreen() {
   useFocusEffect(reload);
 
   const name = profile?.display_name ?? 'Joueur';
-  const elo = profile?.elo ?? 1200;
+  const elo = profile?.elo ?? 1000;
   const level = levelForElo(elo);
   const stats = computeStats(matches);
   const confirmed = matches.filter((m) => m.status === 'confirmed');
@@ -321,7 +339,7 @@ export default function ProfileScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.topbar}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Profil</ThemedText>
@@ -376,7 +394,7 @@ export default function ProfileScreen() {
               <ThemedText type="small" themeColor="textSecondary" style={styles.pillLabel}>
                 Meilleure perf
               </ThemedText>
-              <ThemedText type="cardTitle" style={{ color: Palette.evergreen }}>
+              <ThemedText type="cardTitle" style={{ color: Palette.onyx }}>
                 {bestPerf !== null ? `+${bestPerf}` : '-'}
               </ThemedText>
             </View>
@@ -411,11 +429,11 @@ export default function ProfileScreen() {
                 <View style={styles.objTop}>
                   <View style={styles.ring}>
                     {hasGoal ? (
-                      <ThemedText type="smallBold" style={{ color: Palette.evergreen }}>
+                      <ThemedText type="smallBold" style={{ color: Palette.onyx }}>
                         {Math.round(objective.pct * 100)}%
                       </ThemedText>
                     ) : (
-                      <Ionicons name="flag-outline" size={20} color={Palette.evergreen} />
+                      <Ionicons name="flag-outline" size={20} color={Palette.onyx} />
                     )}
                   </View>
                   <View style={styles.objText}>
@@ -679,7 +697,7 @@ function PppMatchCard({ m, myName }: { m: MatchView; myName: string }) {
 
         <ThemedText
           type="cardTitle"
-          style={[styles.matchDelta, { color: m.delta > 0 ? Palette.evergreen : m.delta < 0 ? Palette.redInk : Palette.grey }]}>
+          style={[styles.matchDelta, { color: m.delta > 0 ? Palette.onyx : m.delta < 0 ? Palette.redInk : Palette.grey }]}>
           {m.delta ? `${m.delta > 0 ? '+' : ''}${m.delta}` : '-'}
         </ThemedText>
       </View>
@@ -723,7 +741,7 @@ function FfttMatchCard({ m, myName }: { m: FfttMatchView; myName: string }) {
 
         <ThemedText
           type="cardTitle"
-          style={[styles.matchDelta, { color: gain != null && gain > 0 ? Palette.evergreen : gain != null && gain < 0 ? Palette.redInk : Palette.grey }]}>
+          style={[styles.matchDelta, { color: gain != null && gain > 0 ? Palette.onyx : gain != null && gain < 0 ? Palette.redInk : Palette.grey }]}>
           {gain != null ? `${gain > 0 ? '+' : ''}${gain}` : '-'}
         </ThemedText>
       </View>
@@ -764,7 +782,7 @@ const styles = StyleSheet.create({
 
   tabs: { flexDirection: 'row', gap: Spacing.two },
   tab: { flex: 1, paddingVertical: Spacing.two, paddingHorizontal: Spacing.one, borderRadius: Radius.xs, alignItems: 'center' },
-  tabOn: { backgroundColor: Palette.evergreen },
+  tabOn: { backgroundColor: Palette.ink2 },
   tabOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   tabBody: { gap: Spacing.three },
 
@@ -789,7 +807,7 @@ const styles = StyleSheet.create({
   objText: { flex: 1, gap: Spacing.half },
   clubIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
   barTrack: { height: 8, borderRadius: Radius.pill, backgroundColor: TRACK, overflow: 'hidden' },
-  barFill: { height: '100%', backgroundColor: Palette.evergreen, borderRadius: Radius.pill },
+  barFill: { height: '100%', backgroundColor: Palette.onyx, borderRadius: Radius.pill },
 
   playedRow: {
     flexDirection: 'row',
@@ -818,7 +836,7 @@ const styles = StyleSheet.create({
   gridRow: { flexDirection: 'row' },
   gridCell: { flex: 1, alignItems: 'center', paddingVertical: Spacing.half },
   dot: { width: 16, height: 16, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border, backgroundColor: Palette.whitePP },
-  dotOn: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
+  dotOn: { backgroundColor: Palette.onyx, borderColor: Palette.onyx },
   dotFuture: { opacity: 0.3 },
 
   empty: {
@@ -841,7 +859,7 @@ const styles = StyleSheet.create({
   matchMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   srcBadge: { borderRadius: Radius.xs, paddingHorizontal: Spacing.two, paddingVertical: 2 },
   srcBadgeTxt: { fontSize: 10 },
-  srcPpp: { backgroundColor: Palette.evergreen },
+  srcPpp: { backgroundColor: Palette.onyx },
   srcFftt: { backgroundColor: Palette.blue, opacity: 0.9 },
   matchBody: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   matchPlayers: { flex: 1, gap: Spacing.one },
@@ -876,13 +894,13 @@ const styles = StyleSheet.create({
   },
   monthRow: { gap: Spacing.two, paddingVertical: Spacing.one },
   monthChip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderRadius: Radius.xs },
-  monthChipOn: { backgroundColor: Palette.evergreen },
+  monthChipOn: { backgroundColor: Palette.ink2 },
   monthChipOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   modalSave: {
     marginTop: Spacing.three,
     height: 52,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

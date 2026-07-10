@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeObjective, eloDeltas, expectedScore, ffttPointsToElo, levelForElo, nextElo } from './index';
+import {
+  computeObjective,
+  eloDelta,
+  eloDeltas,
+  expectedScore,
+  kFactor,
+  levelForElo,
+  nextElo,
+  startingElo,
+} from './index';
 
 describe('expectedScore', () => {
   it('vaut 0.5 à ratings égaux', () => {
@@ -13,26 +22,63 @@ describe('expectedScore', () => {
   });
 });
 
-describe('nextElo', () => {
-  it('gagner monte, perdre descend', () => {
-    expect(nextElo(1500, 1500, true)).toBeGreaterThan(1500);
-    expect(nextElo(1500, 1500, false)).toBeLessThan(1500);
+describe('startingElo — points FFTT + 500, sinon 1000', () => {
+  it('licencié : points + 500', () => {
+    expect(startingElo(500)).toBe(1000); // plancher FFTT (débutant licencié)
+    expect(startingElo(800)).toBe(1300);
+    expect(startingElo(1712)).toBe(2212);
   });
-  it('victoire à ratings égaux = +16 (K=32)', () => {
-    expect(nextElo(1500, 1500, true)).toBe(1516);
+  it('non licencié : 1000', () => {
+    expect(startingElo()).toBe(1000);
+    expect(startingElo(null)).toBe(1000);
+    expect(startingElo(0)).toBe(1000);
+    expect(startingElo(NaN)).toBe(1000);
+  });
+});
+
+describe('kFactor — paliers sur matchs app joués', () => {
+  it('0-5 → 80, 6-10 → 50, 11+ → 30', () => {
+    expect(kFactor(0)).toBe(80);
+    expect(kFactor(5)).toBe(80);
+    expect(kFactor(6)).toBe(50);
+    expect(kFactor(10)).toBe(50);
+    expect(kFactor(11)).toBe(30);
+    expect(kFactor(200)).toBe(30);
+  });
+});
+
+describe('nextElo — formule de Paul', () => {
+  it('gagner monte, perdre descend', () => {
+    expect(nextElo(1500, 1500, true, 20)).toBeGreaterThan(1500);
+    expect(nextElo(1500, 1500, false, 20)).toBeLessThan(1500);
+  });
+  it('victoire à ratings égaux : +40 (K=80), +25 (K=50), +15 (K=30)', () => {
+    expect(nextElo(1000, 1000, true, 0)).toBe(1040);
+    expect(nextElo(1000, 1000, true, 6)).toBe(1025);
+    expect(nextElo(1000, 1000, true, 11)).toBe(1015);
+  });
+  it('match FFTT : delta ×1.2 (victoire à égalité, K=80 → +48)', () => {
+    expect(nextElo(1000, 1000, true, 0, 'fftt')).toBe(1048);
+    expect(eloDelta(1000, 1000, 1, 0, 'fftt')).toBeCloseTo(1.2 * eloDelta(1000, 1000, 1, 0, 'app'), 9);
   });
   it('battre plus fort rapporte plus que battre plus faible', () => {
-    const vsStrong = nextElo(1500, 1900, true) - 1500;
-    const vsWeak = nextElo(1500, 1100, true) - 1500;
+    const vsStrong = nextElo(1200, 1600, true, 11) - 1200;
+    const vsWeak = nextElo(1200, 800, true, 11) - 1200;
     expect(vsStrong).toBeGreaterThan(vsWeak);
   });
 });
 
-describe('eloDeltas - somme nulle à ratings égaux', () => {
-  it('a gagne : delta a positif, delta b négatif, opposés', () => {
-    const d = eloDeltas(1500, 1500, 'a');
-    expect(d.a).toBe(16);
-    expect(d.b).toBe(-16);
+describe('eloDeltas — zéro-somme seulement à K égal', () => {
+  it('même palier : deltas opposés', () => {
+    const d = eloDeltas(1400, 1400, 'a', 20, 20);
+    expect(d.a).toBe(15);
+    expect(d.b).toBe(-15);
+  });
+  it('paliers différents : le nouveau bouge plus (non zéro-somme)', () => {
+    const d = eloDeltas(1400, 1400, 'a', 0, 20); // a nouveau (K=80), b établi (K=30)
+    expect(d.a).toBe(40);
+    expect(d.b).toBe(-15);
+    expect(d.a + d.b).not.toBe(0);
   });
 });
 
@@ -47,15 +93,6 @@ describe('levelForElo - paliers', () => {
     expect(levelForElo(1900).key).toBe('elite');
     expect(levelForElo(2100).key).toBe('legend');
     expect(levelForElo(9999).key).toBe('legend');
-  });
-});
-
-describe('ffttPointsToElo - bornes', () => {
-  it('clampe entre 800 et 2600', () => {
-    expect(ffttPointsToElo(0)).toBe(1000);
-    expect(ffttPointsToElo(2000)).toBe(1500);
-    expect(ffttPointsToElo(100000)).toBe(2600);
-    expect(ffttPointsToElo(-100000)).toBe(800);
   });
 });
 

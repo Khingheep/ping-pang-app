@@ -1,15 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
+import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { uploadAvatar } from '@/lib/players/avatar';
+import { useIsAdmin } from '@/lib/players/moderation';
 import { fetchMyProfile, updateMyProfile, updatePrefs, type AccountPrefs } from '@/lib/players/profile';
+import { qk } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
-import { notify } from '@/lib/ui/alert';
+import { choose, notify } from '@/lib/ui/alert';
 
 const PRIVACY: { key: keyof AccountPrefs; label: string }[] = [
   { key: 'profile_public', label: 'Profil public' },
@@ -32,14 +38,20 @@ const DEFAULT_PREFS: AccountPrefs = {
 
 export default function SettingsScreen() {
   const { session, signOut } = useAuth();
+  const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [bio, setBio] = useState('');
   const [city, setCity] = useState('');
+  // Valeurs chargées (référence) → sert à n'afficher « Enregistrer » que si un champ a bougé.
+  const [baseline, setBaseline] = useState({ displayName: '', bio: '', city: '' });
   const [ffttPoints, setFfttPoints] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [prefs, setPrefs] = useState<AccountPrefs>(DEFAULT_PREFS);
   const [newPwd, setNewPwd] = useState('');
   const [pwdOpen, setPwdOpen] = useState(false);
+  const isAdminQ = useIsAdmin(session?.user?.id);
 
   useFocusEffect(
     useCallback(() => {
@@ -48,8 +60,10 @@ export default function SettingsScreen() {
       fetchMyProfile(id).then((p) => {
         if (!p) return;
         setDisplayName(p.display_name);
+        setAvatarUrl(p.avatar_url);
         setBio(p.bio ?? '');
         setCity(p.city ?? '');
+        setBaseline({ displayName: p.display_name, bio: p.bio ?? '', city: p.city ?? '' });
         setFfttPoints(p.fftt_points);
         setPrefs({
           profile_public: p.profile_public,
@@ -67,6 +81,66 @@ export default function SettingsScreen() {
     const id = session?.user?.id;
     setPrefs((cur) => ({ ...cur, [key]: value }));
     if (id) updatePrefs(id, { [key]: value }).catch(() => {});
+  }
+
+  // Upload immédiat + persistance ; rafraîchit les caches pour que la nouvelle photo
+  // apparaisse partout (profil, classement, défis…), pas seulement ici.
+  async function applyPhoto(uri: string) {
+    const id = session?.user?.id;
+    if (!id) return;
+    try {
+      setPhotoBusy(true);
+      const url = await uploadAvatar(id, uri);
+      await updateMyProfile(id, { avatar_url: url });
+      setAvatarUrl(url);
+      queryClient.invalidateQueries({ queryKey: qk.profile(id) });
+      queryClient.invalidateQueries({ queryKey: qk.leaderboard() });
+      queryClient.invalidateQueries({ queryKey: ['players'] });
+      notify('Photo mise à jour ✅');
+    } catch (e) {
+      notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  async function pickFromLibrary() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      notify('Photo', 'Autorise l’accès aux photos pour changer d’avatar.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.6 });
+    if (res.canceled || !res.assets[0]) return;
+    void applyPhoto(res.assets[0].uri);
+  }
+
+  async function takePhoto() {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      notify('Caméra', 'Autorise l’accès à la caméra pour prendre une photo.');
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.6 });
+    if (res.canceled || !res.assets[0]) return;
+    void applyPhoto(res.assets[0].uri);
+  }
+
+  function changePhoto() {
+    if (photoBusy) return;
+    // Sur le web, le file-picker natif gère déjà « photo / galerie » selon l'OS.
+    if (Platform.OS === 'web') {
+      void pickFromLibrary();
+      return;
+    }
+    choose({
+      title: 'Photo de profil',
+      message: 'Comment veux-tu changer ta photo ?',
+      options: [
+        { text: 'Prendre une photo', onPress: () => void takePhoto() },
+        { text: 'Choisir dans la galerie', onPress: () => void pickFromLibrary() },
+      ],
+    });
   }
 
   async function changePassword() {
@@ -102,11 +176,17 @@ export default function SettingsScreen() {
     }
   }
 
+  // Comparé aux valeurs chargées (trim des deux côtés) → « Enregistrer » n'apparaît qu'en cas de vrai changement.
+  const dirty =
+    displayName.trim() !== baseline.displayName.trim() ||
+    city.trim() !== baseline.city.trim() ||
+    bio.trim() !== baseline.bio.trim();
+
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Paramètres</ThemedText>
@@ -114,6 +194,24 @@ export default function SettingsScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.photoWrap}>
+            <Pressable onPress={changePhoto} disabled={photoBusy}>
+              <Avatar name={displayName || 'Joueur'} uri={avatarUrl} size={96} color={Palette.purple} />
+              <View style={styles.photoBadge}>
+                {photoBusy ? (
+                  <ActivityIndicator size="small" color={Palette.whitePP} />
+                ) : (
+                  <Ionicons name="camera" size={16} color={Palette.whitePP} />
+                )}
+              </View>
+            </Pressable>
+            <Pressable onPress={changePhoto} disabled={photoBusy} hitSlop={8}>
+              <ThemedText type="smallBold" themeColor="brand">
+                Changer la photo
+              </ThemedText>
+            </Pressable>
+          </View>
+
           <ThemedText type="smallBold" themeColor="textSecondary">
             PRÉNOM / PSEUDO
           </ThemedText>
@@ -137,15 +235,17 @@ export default function SettingsScreen() {
             maxLength={280}
           />
 
-          <Pressable style={[styles.save, busy && { opacity: 0.6 }]} disabled={busy} onPress={save}>
-            {busy ? (
-              <ActivityIndicator color={Palette.whitePP} />
-            ) : (
-              <ThemedText type="cardTitle" themeColor="onBrand">
-                Enregistrer
-              </ThemedText>
-            )}
-          </Pressable>
+          {dirty || busy ? (
+            <Pressable style={[styles.save, busy && { opacity: 0.6 }]} disabled={busy} onPress={save}>
+              {busy ? (
+                <ActivityIndicator color={Palette.whitePP} />
+              ) : (
+                <ThemedText type="cardTitle" themeColor="onBrand">
+                  Enregistrer
+                </ThemedText>
+              )}
+            </Pressable>
+          ) : null}
 
           <Pressable style={styles.linkRow} onPress={() => router.push('/link-fftt')}>
             <ThemedText type="cardTitle">{ffttPoints ? 'Mon compte FFTT' : 'Lier mon compte FFTT'}</ThemedText>
@@ -164,7 +264,7 @@ export default function SettingsScreen() {
                 <Switch
                   value={prefs[row.key]}
                   onValueChange={(v) => toggle(row.key, v)}
-                  trackColor={{ true: Palette.evergreen, false: Palette.border }}
+                  trackColor={{ true: Palette.onyx, false: Palette.border }}
                   thumbColor={Palette.whitePP}
                 />
               </View>
@@ -181,12 +281,19 @@ export default function SettingsScreen() {
                 <Switch
                   value={prefs[row.key]}
                   onValueChange={(v) => toggle(row.key, v)}
-                  trackColor={{ true: Palette.evergreen, false: Palette.border }}
+                  trackColor={{ true: Palette.onyx, false: Palette.border }}
                   thumbColor={Palette.whitePP}
                 />
               </View>
             ))}
           </View>
+
+          {isAdminQ.data ? (
+            <Pressable style={styles.linkRow} onPress={() => router.push('/admin')}>
+              <ThemedText type="cardTitle">Admin · Signalements</ThemedText>
+              <Ionicons name="shield-outline" size={18} color={Palette.grey} />
+            </Pressable>
+          ) : null}
 
           <Pressable style={styles.linkRow} onPress={() => setPwdOpen((o) => !o)}>
             <ThemedText type="cardTitle">Changer le mot de passe</ThemedText>
@@ -239,6 +346,20 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
   },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.two },
+  photoWrap: { alignItems: 'center', gap: Spacing.two, marginBottom: Spacing.three },
+  photoBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: Palette.onyx,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: Palette.whitePP,
+  },
   lbl: { marginTop: Spacing.three },
   input: {
     height: 52,
@@ -256,7 +377,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.four,
     height: 52,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

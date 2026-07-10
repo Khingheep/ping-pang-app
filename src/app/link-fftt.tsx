@@ -121,7 +121,7 @@ export default function LinkFfttScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Lier mon compte FFTT</ThemedText>
@@ -133,7 +133,7 @@ export default function LinkFfttScreen() {
             <View style={styles.linkedWrap}>
               <View style={styles.linkedCard}>
                 <View style={styles.linkedTop}>
-                  <Ionicons name="ribbon" size={22} color={Palette.evergreen} />
+                  <Ionicons name="ribbon" size={22} color={Palette.onyx} />
                   <View style={{ flex: 1 }}>
                     <ThemedText type="cardTitle">
                       {detail?.prenom && detail?.nom ? `${detail.prenom} ${detail.nom}` : `Licence ${linked.ffttId}`}
@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
   searchBtn: {
     height: 52,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

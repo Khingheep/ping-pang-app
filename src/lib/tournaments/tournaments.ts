@@ -10,25 +10,30 @@ import { useQuery } from '@tanstack/react-query';
 
 import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
-import { assignPoules, numPoulesForPlayers, pairWinners, pouleMatchOrder, seedBracketRound0 } from './bracket';
+import { assignPoules, numPoulesForPlayers, pairWinners, pouleMatchOrder, seedBracketRound0, seedDirectBracket } from './bracket';
 
 export { computeFinalRanking, computePlayerRecords, computePouleStandings, type FinalRankEntry, type PlayerRecord } from './bracket';
 
-export type TournamentFormat = 'bo3' | 'bo5' | 'bo7';
+export type TournamentFormat = 'bo1' | 'bo3' | 'bo5' | 'bo7';
 export type TournamentStatus = 'open' | 'poules' | 'bracket' | 'done';
 export type TournamentPhase = 'poule' | 'bracket';
+/** Formule du tournoi : poules + tableau (défaut) ou tableau à élimination directe (sans poules). */
+export type TournamentStructure = 'poules' | 'bracket';
 
 export type Tournament = {
   id: string;
   code: string;
   name: string;
   owner_id: string;
-  format: TournamentFormat;
+  format: TournamentFormat; // format des poules (et format unique en tableau direct)
+  bracket_format: TournamentFormat | null; // format du tableau final ; null = reprend `format`
   max_players: number;
   players_per_poule: number;
   qualifiers_per_poule: number; // nb de joueurs qualifiés par poule pour le tableau (1, 2 ou 3)
+  structure: TournamentStructure; // 'poules' (défaut) | 'bracket' (élimination directe, sans poules)
   is_ranked: boolean;
   status: TournamentStatus;
+  city: string | null; // localisation libre (optionnelle) — pour filtrer « Mes tournois »
   created_at: string;
 };
 
@@ -41,6 +46,9 @@ export type TournamentPlayer = {
   elo: number;
   ranking: number | null; // classement officiel FFTT (fftt_points) - base du seeding ; null = non licencié
   club: string | null; // club FFTT - sert à éviter 2 joueurs du même club dans une poule
+  isGuest: boolean; // invité ajouté par l'organisateur (sans compte)
+  organizer: boolean; // co-organisateur : peut saisir le score de n'importe quel match
+  plays: boolean; // false = organisateur « au desk » qui gère sans être tiré dans les poules
 };
 
 export type TournamentMatch = {
@@ -77,10 +85,20 @@ export type PouleStanding = {
 
 /** Meta format → nombre de sets (best_of) + libellé court. */
 export const TOURNAMENT_FORMATS: Record<TournamentFormat, { label: string; bestOf: number }> = {
+  bo1: { label: 'BO1', bestOf: 1 },
   bo3: { label: 'BO3', bestOf: 3 },
   bo5: { label: 'BO5', bestOf: 5 },
   bo7: { label: 'BO7', bestOf: 7 },
 };
+
+/**
+ * Best-of applicable à un match selon sa PHASE : les matchs de tableau utilisent `bracket_format`
+ * s'il est défini (ex. poules en BO3, tableau final en BO5), sinon on retombe sur `format`.
+ */
+export function bestOfForMatch(t: Pick<Tournament, 'format' | 'bracket_format'>, phase: TournamentPhase): number {
+  const fmt = phase === 'bracket' ? t.bracket_format ?? t.format : t.format;
+  return TOURNAMENT_FORMATS[fmt]?.bestOf ?? 5;
+}
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans O/0/I/1 ambigus
 
@@ -96,7 +114,9 @@ type DetailPlayerRow = {
   player_id: string;
   poule: string | null;
   seed: number | null;
-  players: { display_name: string; elo: number; fftt_points: number | null; fftt_club: string | null; avatar_url: string | null } | null;
+  is_organizer: boolean | null;
+  plays: boolean | null;
+  players: { display_name: string; elo: number; fftt_points: number | null; fftt_club: string | null; avatar_url: string | null; is_guest: boolean | null } | null;
 };
 
 export async function fetchTournamentDetail(id: string): Promise<TournamentDetail | null> {
@@ -105,7 +125,7 @@ export async function fetchTournamentDetail(id: string): Promise<TournamentDetai
 
   const { data: pData } = await supabase
     .from('tournament_players')
-    .select('player_id, poule, seed, players(display_name, elo, fftt_points, fftt_club, avatar_url)')
+    .select('player_id, poule, seed, is_organizer, plays, players(display_name, elo, fftt_points, fftt_club, avatar_url, is_guest)')
     .eq('tournament_id', id);
   const players: TournamentPlayer[] = ((pData as unknown as DetailPlayerRow[] | null) ?? []).map((r) => ({
     player_id: r.player_id,
@@ -116,6 +136,9 @@ export async function fetchTournamentDetail(id: string): Promise<TournamentDetai
     elo: r.players?.elo ?? 0,
     ranking: r.players?.fftt_points ?? null,
     club: r.players?.fftt_club ?? null,
+    isGuest: r.players?.is_guest ?? false,
+    organizer: r.is_organizer ?? false,
+    plays: r.plays ?? true,
   }));
 
   const { data: mData } = await supabase
@@ -159,11 +182,14 @@ export async function createTournament(
   ownerId: string,
   p: {
     name: string;
-    format: TournamentFormat;
+    format: TournamentFormat; // format des poules (ou format unique en tableau direct)
+    bracketFormat?: TournamentFormat; // format du tableau final ; défaut = `format`
     maxPlayers: number;
     playersPerPoule?: number; // optionnel : le nombre de poules est recalculé au lancement selon les inscrits réels
     qualifiersPerPoule?: number; // nb de qualifiés par poule (1, 2 ou 3) - défaut 2
+    structure?: TournamentStructure; // 'poules' (défaut) | 'bracket' (tableau direct)
     isRanked: boolean;
+    city?: string; // localisation libre (optionnelle)
   },
 ): Promise<Tournament> {
   // Valeur stockée à titre indicatif (capacité max) ; l'assignation réelle se fait au lancement.
@@ -179,11 +205,15 @@ export async function createTournament(
         name: p.name,
         owner_id: ownerId,
         format: p.format,
+        // On ne stocke le format tableau que s'il diffère (sinon null → reprend `format`).
+        bracket_format: p.bracketFormat && p.bracketFormat !== p.format ? p.bracketFormat : null,
         max_players: p.maxPlayers,
         players_per_poule: perPoule,
         qualifiers_per_poule: qualifiers,
+        structure: p.structure ?? 'poules',
         is_ranked: p.isRanked,
         status: 'open',
+        city: p.city?.trim() || null,
       })
       .select('*')
       .single();
@@ -230,6 +260,124 @@ export async function addPlayersToTournament(tournamentId: string, playerIds: st
   if (error) throw error;
 }
 
+/**
+ * L'organisateur inscrit un « invité » (sans compte) : crée une ligne joueur dédiée et l'ajoute
+ * au tournoi, en une opération atomique (RPC SECURITY DEFINER, cf. migration 0056). ELO optionnel
+ * (défaut 1200). Renvoie l'id du joueur invité créé.
+ */
+export async function addGuestToTournament(tournamentId: string, name: string, elo?: number): Promise<string> {
+  const { data, error } = await supabase.rpc('create_tournament_guest', {
+    t_id: tournamentId,
+    guest_name: name.trim(),
+    guest_elo: elo ?? null,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+/**
+ * L'organisateur modifie un INVITÉ déjà inscrit : son nom (cosmétique) et/ou son ELO (sert au
+ * seeding). RPC SECURITY DEFINER (cf. migration 0066) gated manager + invité de ce tournoi
+ * uniquement. `elo` omis → l'ELO n'est pas touché.
+ */
+export async function updateTournamentGuest(
+  tournamentId: string,
+  playerId: string,
+  name: string,
+  elo?: number,
+): Promise<void> {
+  const { error } = await supabase.rpc('update_tournament_guest', {
+    t_id: tournamentId,
+    target: playerId,
+    guest_name: name.trim(),
+    guest_elo: elo ?? null,
+  });
+  if (error) throw error;
+}
+
+/**
+ * L'organisateur ajuste la capacité (nombre de joueurs max) d'un tournoi PAS encore lancé.
+ * Écriture directe : la RLS `tournaments update owner` (0021) réserve déjà ça au propriétaire.
+ * Le nombre de poules est recalculé au lancement selon les inscrits réels → sans impact ici.
+ */
+export async function updateTournamentMaxPlayers(tournamentId: string, maxPlayers: number): Promise<void> {
+  const { error } = await supabase
+    .from('tournaments')
+    .update({ max_players: maxPlayers })
+    .eq('id', tournamentId)
+    .eq('status', 'open');
+  if (error) throw error;
+}
+
+/**
+ * L'organisateur modifie le(s) format(s) : poules et/ou tableau final (ex. poules BO3 / tableau BO5).
+ * RPC SECURITY DEFINER (cf. migration 0066) gated manager, autorisée tant que le tournoi n'est pas
+ * terminé. Ne re-valide PAS les scores déjà saisis : n'affecte que la saisie des matchs à venir.
+ */
+export async function setTournamentFormats(
+  tournamentId: string,
+  pouleFormat: TournamentFormat,
+  bracketFormat: TournamentFormat,
+): Promise<void> {
+  const { error } = await supabase.rpc('set_tournament_formats', {
+    t_id: tournamentId,
+    poule_fmt: pouleFormat,
+    // On ne stocke le format tableau que s'il diffère (sinon null → reprend le format des poules).
+    bracket_fmt: bracketFormat !== pouleFormat ? bracketFormat : null,
+  });
+  if (error) throw error;
+}
+
+/**
+ * L'organisateur retire un inscrit avant le lancement (phase « open »). Passe par une RPC
+ * SECURITY DEFINER (cf. migration 0064) qui fait aussi le ménage de la ligne joueur d'un invité
+ * (sinon orpheline). Réservé au propriétaire ; l'organisateur lui-même ne peut pas être retiré.
+ */
+export async function removePlayerFromTournament(tournamentId: string, playerId: string): Promise<void> {
+  const { error } = await supabase.rpc('remove_tournament_player', { t_id: tournamentId, target: playerId });
+  if (error) throw error;
+}
+
+/**
+ * L'organisateur promeut / rétrograde un participant comme co-organisateur : il peut alors saisir
+ * le score de n'importe quel match (utile pour gérer un event à plusieurs téléphones).
+ * Réservé au propriétaire du tournoi (RPC SECURITY DEFINER, cf. migration 0057).
+ */
+export async function setTournamentOrganizer(tournamentId: string, playerId: string, value: boolean): Promise<void> {
+  const { error } = await supabase.rpc('set_tournament_organizer', { t_id: tournamentId, target: playerId, value });
+  if (error) throw error;
+}
+
+/**
+ * L'organisateur bascule un participant « joue » ↔ « au desk » (ne joue pas). Un participant au
+ * desk gère (s'il est co-orga) mais n'est pas tiré dans les poules. Réservé au propriétaire.
+ */
+export async function setTournamentPlays(tournamentId: string, playerId: string, value: boolean): Promise<void> {
+  const { error } = await supabase.rpc('set_tournament_plays', { t_id: tournamentId, target: playerId, value });
+  if (error) throw error;
+}
+
+/**
+ * Remet un tournoi lancé en phase « inscriptions » (status = 'open') : supprime tous ses matchs et
+ * réinitialise poule/seed. RPC SECURITY DEFINER (cf. migration 0066) gated manager, REFUSÉE dès
+ * qu'un vrai score a été saisi (les byes auto du tableau direct ne comptent pas). Sert à ajouter/
+ * retirer un joueur oublié, puis relancer le tirage.
+ */
+export async function resetTournamentToOpen(tournamentId: string): Promise<void> {
+  const { error } = await supabase.rpc('reset_tournament_to_open', { t_id: tournamentId });
+  if (error) throw error;
+}
+
+/**
+ * Refait le tirage (poules ou tableau) avec les inscrits actuels : reset → open, puis relance.
+ * Réutilise tout le moteur de génération. À n'appeler que tant qu'aucun score n'est saisi.
+ */
+export async function redrawTournament(tournamentId: string): Promise<void> {
+  await resetTournamentToOpen(tournamentId);
+  const fresh = await fetchTournamentDetail(tournamentId);
+  if (fresh) await startTournament(fresh);
+}
+
 // ───────────────────────── Génération des poules ─────────────────────────
 
 /**
@@ -242,18 +390,28 @@ async function setTournamentStatus(tournamentId: string, status: TournamentStatu
   if (error) throw error;
 }
 
-/** Lance le tournoi : assigne les poules + crée tous les matchs round-robin. */
+/** Lance le tournoi : poules + matchs round-robin, OU tableau direct selon la formule choisie. */
 export async function startTournament(detail: TournamentDetail): Promise<void> {
   const { tournament, players } = detail;
-  // Idempotent : un tournoi déjà lancé (ou avec des matchs) ne re-génère JAMAIS - sinon
-  // les matchs de poule seraient insérés en double (3 → 6). L'index unique en base (cf. 0049)
-  // est le dernier rempart en cas de course entre deux participants.
+  // Idempotent : un tournoi déjà lancé ne re-génère JAMAIS (le statut n'est plus 'open').
   if (tournament.status !== 'open') return;
+  // Les organisateurs « au desk » (plays = false) gèrent sans être tirés dans le tirage.
+  const playing = players.filter((p) => p.plays);
+  if (playing.length < 2) throw new Error('Il faut au moins 2 joueurs.');
+
+  // Formule « tableau direct » : pas de poules, on seed tout le monde par ELO dans le tableau.
+  if (tournament.structure === 'bracket') {
+    await startDirectBracket(detail, playing);
+    return;
+  }
+
+  // ── Formule « poules + tableau » (historique) ──
+  // Un tournoi avec des matchs de poule ne re-génère jamais (sinon doublons 3 → 6). L'index
+  // unique en base (cf. 0049) est le dernier rempart en cas de course entre deux participants.
   if (detail.matches.some((m) => m.phase === 'poule')) return;
-  if (players.length < 2) throw new Error('Il faut au moins 2 joueurs.');
 
   // Nombre de poules recalculé selon les inscrits RÉELS (pas la capacité max) → toujours équilibré.
-  const assignments = assignPoules(players, numPoulesForPlayers(players.length));
+  const assignments = assignPoules(playing, numPoulesForPlayers(playing.length));
 
   // 1. Met à jour poule + seed de chaque joueur.
   for (const a of assignments) {
@@ -294,7 +452,51 @@ export async function startTournament(detail: TournamentDetail): Promise<void> {
 
 // ───────────────────────── Bracket ─────────────────────────
 
-/** Crée le 1er tour du bracket à partir des 2 premiers de chaque poule (croisé 1ers/2es). */
+/** Vainqueur d'office d'un match « exempt » (un seul joueur présent), sinon null. */
+function byeWinner(a: string | null, b: string | null): string | null {
+  if (a && !b) return a;
+  if (b && !a) return b;
+  return null;
+}
+
+/**
+ * Lance un tournoi en « tableau direct » (sans poules) : seed tous les joueurs par ELO
+ * (le meilleur = tête de série 1, formule serpent), crée le 1er tour du tableau et résout
+ * d'office les exempts (bye) pour que l'avancement automatique fonctionne. Statut → 'bracket'.
+ */
+async function startDirectBracket(detail: TournamentDetail, playing: TournamentPlayer[]): Promise<void> {
+  const { tournament } = detail;
+  if (detail.matches.some((m) => m.phase === 'bracket')) return; // déjà généré (idempotent / course)
+
+  // Seed = ELO décroissant, stocké dans `seed` (info d'affichage) ; pas de poule.
+  const ranked = [...playing].sort(
+    (a, b) => b.elo - a.elo || (a.player_id < b.player_id ? -1 : a.player_id > b.player_id ? 1 : 0),
+  );
+  for (let i = 0; i < ranked.length; i++) {
+    await supabase
+      .from('tournament_players')
+      .update({ poule: null, seed: i + 1 })
+      .eq('tournament_id', tournament.id)
+      .eq('player_id', ranked[i].player_id);
+  }
+
+  const rows: Record<string, unknown>[] = seedDirectBracket(playing).map((p, i) => ({
+    tournament_id: tournament.id,
+    phase: 'bracket',
+    round: 0,
+    slot: i,
+    player_a: p.playerA,
+    player_b: p.playerB,
+    winner: byeWinner(p.playerA, p.playerB), // exempt = gagné d'office → le joueur avance
+  }));
+  if (rows.length) {
+    const { error } = await supabase.from('tournament_matches').insert(rows);
+    if (error && error.code !== '23505') throw error; // 23505 = déjà généré (course) → ignore
+  }
+  await setTournamentStatus(tournament.id, 'bracket');
+}
+
+/** Crée le 1er tour du bracket à partir des qualifiés de poule (croisé 1ers/2es). */
 async function generateBracketRound0(detail: TournamentDetail): Promise<void> {
   const qualifiers = detail.tournament.qualifiers_per_poule ?? 2;
   const rows: Record<string, unknown>[] = seedBracketRound0(detail.players, detail.matches, qualifiers).map((p, i) => ({
@@ -304,6 +506,7 @@ async function generateBracketRound0(detail: TournamentDetail): Promise<void> {
     slot: i,
     player_a: p.playerA,
     player_b: p.playerB,
+    winner: byeWinner(p.playerA, p.playerB), // exempt (ex. Top 3 qualifiés) = gagné d'office
   }));
   if (rows.length) {
     const { error } = await supabase.from('tournament_matches').insert(rows);

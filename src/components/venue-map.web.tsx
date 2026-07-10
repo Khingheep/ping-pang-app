@@ -99,7 +99,7 @@ export const VenueMap = forwardRef<VenueMapHandle, Props>(function VenueMap(
         filter: ['==', ['get', 'slots'], 0],
         paint: {
           'circle-radius': 7,
-          'circle-color': ['case', ['==', ['get', 'indoor'], 1], Palette.blue, Palette.evergreen],
+          'circle-color': ['case', ['==', ['get', 'indoor'], 1], Palette.blue, Palette.onyx],
           'circle-stroke-width': 2,
           'circle-stroke-color': Palette.white,
         },
@@ -110,7 +110,7 @@ export const VenueMap = forwardRef<VenueMapHandle, Props>(function VenueMap(
         type: 'circle',
         source: 'venues',
         filter: ['>', ['get', 'slots'], 0],
-        paint: { 'circle-radius': 13, 'circle-color': Palette.lime, 'circle-stroke-width': 2, 'circle-stroke-color': Palette.evergreen },
+        paint: { 'circle-radius': 13, 'circle-color': Palette.lime, 'circle-stroke-width': 2, 'circle-stroke-color': Palette.onyx },
       });
       map.addLayer({
         id: 'venue-slot-count',

@@ -27,7 +27,16 @@ import {
 import { notify } from '@/lib/ui/alert';
 import { fetchVenue, type Venue } from '@/lib/venues/venues';
 
-export function VenueSheet({ venueId, onClose }: { venueId: string | null; onClose: () => void }) {
+export function VenueSheet({
+  venueId,
+  onClose,
+  embedded = false,
+}: {
+  venueId: string | null;
+  onClose: () => void;
+  /** true = rendu à l'intérieur du panneau existant (carte), sans overlay ni ombre. */
+  embedded?: boolean;
+}) {
   const { session } = useAuth();
   const myId = session?.user?.id;
   const [venue, setVenue] = useState<Venue | null>(null);
@@ -70,8 +79,8 @@ export function VenueSheet({ venueId, onClose }: { venueId: string | null; onClo
   const isIndoor = !!venue?.indoor;
 
   return (
-    <View style={styles.sheet}>
-      <View style={styles.grip} />
+    <View style={embedded ? styles.embedded : styles.sheet}>
+      {embedded ? null : <View style={styles.grip} />}
       <View style={styles.head}>
         <View style={[styles.badge, { backgroundColor: isIndoor ? Palette.blue : Palette.lime }]}>
           <Ionicons name={isIndoor ? 'home' : 'sunny'} size={16} color={Palette.onyx} />
@@ -119,7 +128,10 @@ export function VenueSheet({ venueId, onClose }: { venueId: string | null; onClo
         </Pressable>
       </View>
 
-      <ScrollView style={styles.list} contentContainerStyle={{ gap: Spacing.two }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={embedded ? styles.listFill : styles.list}
+        contentContainerStyle={{ gap: Spacing.two, paddingBottom: embedded ? BottomTabInset + Spacing.three : 0 }}
+        showsVerticalScrollIndicator={false}>
         {slots.length === 0 ? (
           <View style={styles.empty}>
             <ThemedText type="default" themeColor="textSecondary">
@@ -132,7 +144,7 @@ export function VenueSheet({ venueId, onClose }: { venueId: string | null; onClo
             const joined = s.participants.some((p) => p.id === myId);
             return (
               <View key={s.id} style={styles.slot}>
-                <Avatar name={s.hostName} size={40} color={Palette.purple} />
+                <Avatar name={s.hostName} uri={s.hostAvatar} size={40} color={Palette.purple} />
                 <View style={{ flex: 1 }}>
                   <ThemedText type="cardTitle" numberOfLines={1}>
                     {s.hostName}
@@ -152,18 +164,26 @@ export function VenueSheet({ venueId, onClose }: { venueId: string | null; onClo
                     </ThemedText>
                   </View>
                 ) : (
-                  <Pressable
-                    style={[styles.joinBtn, joined ? styles.joined : styles.join, busy === s.id && { opacity: 0.5 }]}
-                    disabled={busy === s.id}
-                    onPress={() => toggle(s)}>
-                    {busy === s.id ? (
-                      <ActivityIndicator size="small" color={joined ? Palette.evergreen : Palette.whitePP} />
-                    ) : (
-                      <ThemedText type="smallBold" themeColor={joined ? 'brand' : 'onBrand'}>
-                        {joined ? 'Rejoint ✓' : 'Rejoindre'}
-                      </ThemedText>
-                    )}
-                  </Pressable>
+                  <View style={styles.slotActions}>
+                    <Pressable
+                      style={styles.msgBtn}
+                      hitSlop={6}
+                      onPress={() => router.push({ pathname: '/chat', params: { id: s.hostId, name: s.hostName } })}>
+                      <Ionicons name="chatbubble-outline" size={18} color={Palette.onyx} />
+                    </Pressable>
+                    <Pressable
+                      style={[styles.joinBtn, joined ? styles.joined : styles.join, busy === s.id && { opacity: 0.5 }]}
+                      disabled={busy === s.id}
+                      onPress={() => toggle(s)}>
+                      {busy === s.id ? (
+                        <ActivityIndicator size="small" color={joined ? Palette.evergreen : Palette.whitePP} />
+                      ) : (
+                        <ThemedText type="smallBold" themeColor={joined ? 'brand' : 'onBrand'}>
+                          {joined ? 'Rejoint ✓' : 'Rejoindre'}
+                        </ThemedText>
+                      )}
+                    </Pressable>
+                  </View>
                 )}
               </View>
             );
@@ -193,13 +213,15 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -3 },
     elevation: 12,
   },
+  embedded: { flex: 1, paddingHorizontal: Spacing.four },
+  listFill: { flex: 1 },
   grip: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: Palette.border, marginTop: Spacing.two },
   head: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.three },
   badge: { width: 40, height: 40, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
   cta: {
     height: 52,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -225,7 +247,18 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
   },
   tag: { backgroundColor: Palette.lime, borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
+  slotActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  msgBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+  },
   joinBtn: { minWidth: 92, height: 38, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.three },
-  join: { backgroundColor: Palette.evergreen },
+  join: { backgroundColor: Palette.onyx },
   joined: { backgroundColor: Palette.lime },
 });

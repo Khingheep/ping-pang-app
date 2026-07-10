@@ -278,9 +278,10 @@ export function computeFinalRanking(players: TournamentPlayer[], matches: Tourna
   }
 
   // Reste (non départagés par le tableau) : bilan V/D global décroissant, puis tête de série.
+  // Les organisateurs « au desk » (plays = false) ne figurent pas au classement (ils ne jouent pas).
   const rec = computePlayerRecords(matches);
   players
-    .filter((p) => !ordered.includes(p.player_id))
+    .filter((p) => p.plays && !ordered.includes(p.player_id))
     .sort((a, b) => (rec.get(b.player_id)?.wins ?? 0) - (rec.get(a.player_id)?.wins ?? 0) || seedOf(a.player_id) - seedOf(b.player_id))
     .forEach((p) => push(p.player_id));
 
@@ -309,6 +310,25 @@ function standardSeedOrder(size: number): number[] {
       next.push(sum - s);
     }
     order = next;
+  }
+  return order;
+}
+
+/**
+ * Variante « serpent » de standardSeedOrder pour le TABLEAU DIRECT (formule demandée par Paul) :
+ * identique au standard, mais les têtes de série 3 et 4 sont échangées de moitié → le n°3 tombe
+ * dans la moitié du n°1 et le n°4 dans celle du n°2. Résultat : demi-finales **1-3** et **2-4**
+ * (au lieu de 1-4 / 2-3 du standard), tout en gardant 1 vs 2 uniquement en finale ET les exempts
+ * sur les têtes de série. Ex. size 4 → [1,3,2,4] (paires 1-3 et 2-4).
+ * NB (non-puissance de 2) : à cause de l'échange 3↔4, un exempt isolé peut tomber sur le n°4
+ * plutôt que le n°3 — sans incidence sur un tableau plein (8/16/32/64).
+ */
+export function snakeSeedOrder(size: number): number[] {
+  const order = standardSeedOrder(size);
+  if (size >= 4) {
+    const i3 = order.indexOf(3);
+    const i4 = order.indexOf(4);
+    [order[i3], order[i4]] = [order[i4], order[i3]];
   }
   return order;
 }
@@ -360,6 +380,26 @@ export function seedBracketRound0(
     }
   }
 
+  const pairs: BracketPair[] = [];
+  for (let i = 0; i < slots.length; i += 2) pairs.push({ playerA: slots[i], playerB: slots[i + 1] });
+  return pairs;
+}
+
+/**
+ * Seeding d'un tableau à ÉLIMINATION DIRECTE (sans poules). Tous les joueurs qui jouent sont
+ * classés par ELO décroissant (formule demandée par Paul : **ELO uniquement**, PAS le classement
+ * FFTT — contrairement aux poules) → le meilleur ELO est tête de série 1. Placement « serpent »
+ * (cf. snakeSeedOrder) : 1 et 2 aux extrémités (ne se croisent qu'en finale), demies 1-3 et 2-4.
+ * Un tableau non-puissance-de-2 est complété par des exempts (bye = playerB null) sur les têtes.
+ */
+export function seedDirectBracket(players: TournamentPlayer[]): BracketPair[] {
+  const ranked = players
+    .filter((p) => p.plays)
+    .sort((a, b) => b.elo - a.elo || (a.player_id < b.player_id ? -1 : a.player_id > b.player_id ? 1 : 0));
+  if (ranked.length < 2) return [];
+  const ids = ranked.map((p) => p.player_id);
+  const size = nextPow2(ids.length);
+  const slots = snakeSeedOrder(size).map((s) => ids[s - 1] ?? null); // null = exempt (bye)
   const pairs: BracketPair[] = [];
   for (let i = 0; i < slots.length; i += 2) pairs.push({ playerA: slots[i], playerB: slots[i + 1] });
   return pairs;

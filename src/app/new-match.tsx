@@ -89,7 +89,7 @@ export default function NewMatchScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="close" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Saisir un match</ThemedText>
@@ -220,7 +220,7 @@ const styles = StyleSheet.create({
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   pillRow: { flexDirection: 'row', gap: Spacing.two },
   pill: { flex: 1, paddingVertical: Spacing.three, borderRadius: Radius.sm, alignItems: 'center' },
-  pillActive: { backgroundColor: Palette.evergreen },
+  pillActive: { backgroundColor: Palette.ink2 },
   pillIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   formatLocked: {
     flexDirection: 'row',
@@ -244,12 +244,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  feelingActive: { borderColor: Palette.evergreen, borderWidth: 2, backgroundColor: Palette.lime },
+  feelingActive: { borderColor: Palette.onyx, borderWidth: 2, backgroundColor: Palette.lime },
   submit: {
     margin: Spacing.four,
     height: 56,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

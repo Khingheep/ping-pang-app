@@ -15,6 +15,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { Icon } from '@/components/icon';
 import { MatchScoreboard } from '@/components/match-scoreboard';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
@@ -146,6 +147,32 @@ const MatchRow = memo(function MatchRow({
   onToggleLike: (item: MatchFeedItem) => void;
   onOpenMatch: (id: string) => void;
 }) {
+  // Match officiel FFTT : carte légère (V/D, pas de sets ni de social).
+  if (m.kind === 'fftt') {
+    const won = m.winnerIsA;
+    return (
+      <View style={styles.ffttCard}>
+        <Avatar name={m.playerA.name} uri={m.playerA.avatarUrl} size={40} color={Palette.blue} />
+        <View style={{ flex: 1 }}>
+          <ThemedText type="cardTitle" numberOfLines={1}>
+            {m.playerA.name}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+            vs {m.playerB.name}
+            {m.opponentRank ? ` · ${m.opponentRank}` : ''}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textMuted">
+            Officiel FFTT · {relativeDate(m.date)}
+          </ThemedText>
+        </View>
+        <View style={[styles.resultPill, { backgroundColor: won ? Palette.lime : Palette.red }]}>
+          <ThemedText type="smallBold" style={{ color: won ? Palette.evergreen : Palette.redInk }}>
+            {won ? 'Victoire' : 'Défaite'}
+          </ThemedText>
+        </View>
+      </View>
+    );
+  }
   return (
     <MatchScoreboard
       topName={m.playerA.id === myId ? 'Toi' : m.playerA.name}
@@ -173,11 +200,12 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const myId = session?.user?.id;
   const [tab, setTab] = useState(0);
+  const [limit, setLimit] = useState(30); // feed infini : grandit de +20 au scroll
   const [actingId, setActingId] = useState<string | null>(null);
 
   const profileQ = useMyProfile(myId);
-  const sessionsQ = useSessionsFeed(myId, 40);
-  const matchesQ = useMatchesFeed(myId, 40);
+  const sessionsQ = useSessionsFeed(myId, limit);
+  const matchesQ = useMatchesFeed(myId, limit);
   const pendingQ = usePendingToConfirm(myId);
   const unreadQ = useUnreadCount();
   const unreadMsgQ = useUnreadMessages(myId);
@@ -222,7 +250,7 @@ export default function FeedScreen() {
   async function onDispute(m: PendingMatch) {
     const ok = await confirm({
       title: 'Contester le score ?',
-      message: `Le match contre ${m.proposerName} sera marqué comme contesté (aucun ELO).`,
+      message: `Le match contre ${m.proposerName} sera marqué comme contesté (aucun ELO). Attention : 3 contestations max par compte, et sans réponse sous 48 h le score est accepté automatiquement.`,
       confirmText: 'Contester',
       destructive: true,
     });
@@ -248,6 +276,9 @@ export default function FeedScreen() {
   // Feed social : on ne montre pas ses propres séances (seulement celles des autres).
   const visibleSessions = useMemo(() => sessions.filter((s) => s.author.id !== myId), [sessions, myId]);
   const data: (SessionFeedItem | MatchFeedItem)[] = tab === 0 ? visibleSessions : matches;
+  // Feed infini : on a rempli une page complète → il y a peut-être plus (on compte le brut fetché).
+  const canLoadMore = (tab === 0 ? sessions.length : matches.length) >= limit;
+  const loadingMore = canLoadMore && (tab === 0 ? sessionsQ.isFetching : matchesQ.isFetching);
 
   const renderItem = useCallback(
     ({ item }: { item: SessionFeedItem | MatchFeedItem }) => (
@@ -269,21 +300,18 @@ export default function FeedScreen() {
         <Pressable style={styles.headerProfile} onPress={() => router.push('/profile' as Href)} hitSlop={8}>
           <Avatar name={name} size={48} color={Palette.purple} uri={profile?.avatar_url} />
           <View style={{ flex: 1 }}>
-            <ThemedText type="cardTitle" themeColor="onBrand" numberOfLines={1}>
+            <ThemedText type="title" numberOfLines={1}>
               {name}
-            </ThemedText>
-            <ThemedText type="small" style={{ color: Palette.lime }}>
-              {profile?.elo ?? 1200} pts
             </ThemedText>
           </View>
         </Pressable>
         <View style={styles.headerIcons}>
           <Pressable onPress={() => router.push('/messages')} hitSlop={10}>
-            <Ionicons name="chatbubble-outline" size={22} color={Palette.whitePP} />
+            <Icon name="forum" size={28} color={Palette.onyx} />
             {unreadMsg > 0 ? <View style={styles.badge} /> : null}
           </Pressable>
           <Pressable onPress={() => router.push('/notifications')} hitSlop={10}>
-            <Ionicons name="notifications-outline" size={22} color={Palette.whitePP} />
+            <Icon name="notifications" size={28} color={Palette.onyx} />
             {unread > 0 ? <View style={styles.badge} /> : null}
           </Pressable>
         </View>
@@ -299,7 +327,7 @@ export default function FeedScreen() {
             {pending.map((m) => (
               <View key={m.id} style={styles.confirmCard}>
                 <View style={styles.confirmTop}>
-                  <Avatar name={m.proposerName} size={40} color={Palette.blue} />
+                  <Avatar name={m.proposerName} uri={m.proposerAvatar} size={40} color={Palette.blue} />
                   <View style={{ flex: 1 }}>
                     <ThemedText type="cardTitle">{m.proposerName} a saisi un match</ThemedText>
                     <ThemedText type="small" themeColor="textSecondary">
@@ -331,8 +359,14 @@ export default function FeedScreen() {
         {/* Onglets */}
         <View style={styles.tabs}>
           {TABS.map((t, i) => (
-            <Pressable key={t} onPress={() => setTab(i)} style={[styles.tab, tab === i ? styles.tabOn : styles.tabOff]}>
-              <ThemedText type="smallBold" themeColor={tab === i ? 'onBrand' : 'text'}>
+            <Pressable
+              key={t}
+              onPress={() => {
+                setTab(i);
+                setLimit(30); // reset la pagination en changeant d'onglet
+              }}
+              style={[styles.tab, tab === i ? styles.tabOn : styles.tabOff]}>
+              <ThemedText type="smallBold" themeColor={tab === i ? 'onBrand' : 'textSecondary'}>
                 {t}
               </ThemedText>
             </Pressable>
@@ -353,6 +387,11 @@ export default function FeedScreen() {
         contentContainerStyle={styles.scroll}
         ListHeaderComponent={header}
         ItemSeparatorComponent={Separator}
+        onEndReachedThreshold={0.6}
+        onEndReached={() => {
+          if (canLoadMore) setLimit((l) => l + 20);
+        }}
+        ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.feedMore} color={Palette.grey} /> : null}
         ListEmptyComponent={
           <View style={styles.itemWrap}>
             <View style={styles.empty}>
@@ -376,12 +415,11 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   scroll: { paddingBottom: BottomTabInset + Spacing.six },
   header: {
-    backgroundColor: Palette.evergreen,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
+    gap: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.md,
   },
   headerProfile: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   headerIcons: { flexDirection: 'row', gap: Spacing.three, alignItems: 'center' },
@@ -391,21 +429,29 @@ const styles = StyleSheet.create({
   pendingBlock: { gap: Spacing.two },
   itemWrap: { paddingHorizontal: Spacing.four },
 
-  tabs: { flexDirection: 'row', gap: Spacing.two },
-  tab: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
-  tabOn: { backgroundColor: Palette.evergreen },
-  tabOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  tabs: { flexDirection: 'row', gap: Spacing.sm },
+  tab: { paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.pill, alignItems: 'center' },
+  tabOn: { backgroundColor: Palette.ink2 },
+  tabOff: { backgroundColor: Palette.white },
 
-  separator: { height: Spacing.two },
-  empty: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border, borderRadius: Radius.sm, padding: Spacing.four },
+  separator: { height: Spacing.md },
+  feedMore: { marginVertical: Spacing.four },
+  empty: { backgroundColor: Palette.white, borderRadius: Radius.sm, padding: Spacing.four },
 
   card: {
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
     borderRadius: Radius.sm,
-    padding: Spacing.three,
+    padding: Spacing.sm,
   },
+  ffttCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    backgroundColor: Palette.white,
+    borderRadius: Radius.sm,
+    padding: Spacing.md,
+  },
+  resultPill: { borderRadius: Radius.pill, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
   cardRow: { flexDirection: 'row', gap: Spacing.three },
   cardCol: { flex: 1, gap: Spacing.two },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
@@ -426,8 +472,17 @@ const styles = StyleSheet.create({
   },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.four, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border, paddingTop: Spacing.two },
-  likeBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm },
+  likeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Palette.whitePP,
+    borderRadius: Radius.sm,
+    paddingVertical: 10,
+  },
 
   confirmCard: {
     backgroundColor: Palette.white,
@@ -441,7 +496,7 @@ const styles = StyleSheet.create({
   confirmActions: { flexDirection: 'row', gap: Spacing.two },
   cBtn: { flex: 1, height: 44, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center' },
   cDispute: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  cConfirm: { backgroundColor: Palette.evergreen },
+  cConfirm: { backgroundColor: Palette.onyx },
 
   fab: {
     position: 'absolute',
@@ -449,7 +504,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: Palette.onyx,

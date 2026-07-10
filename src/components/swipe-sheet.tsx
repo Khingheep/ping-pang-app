@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
   Dimensions,
+  KeyboardAvoidingView,
   Modal,
   PanResponder,
   Platform,
@@ -47,9 +48,26 @@ export function SwipeSheet({
   const insets = useSafeAreaInsets();
   const screenH = Dimensions.get('window').height;
   const [mounted, setMounted] = useState(visible);
+  // Web (PWA) : KeyboardAvoidingView est un no-op → on suit le clavier via l'API visualViewport
+  // (le clavier iOS Safari rétrécit la fenêtre visuelle) pour remonter la feuille au-dessus.
+  const [kbInset, setKbInset] = useState(0);
   const translateY = useRef(new Animated.Value(screenH)).current;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const vv = (window as unknown as { visualViewport?: VisualViewport }).visualViewport;
+    if (!vv) return;
+    const onResize = () => setKbInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+    vv.addEventListener('resize', onResize);
+    vv.addEventListener('scroll', onResize);
+    onResize();
+    return () => {
+      vv.removeEventListener('resize', onResize);
+      vv.removeEventListener('scroll', onResize);
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -85,21 +103,24 @@ export function SwipeSheet({
 
   return (
     <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={() => onCloseRef.current()}>
-      <Animated.View style={styles.overlay}>
+      {/* KeyboardAvoidingView : la feuille remonte au-dessus du clavier (sinon il masque les
+          champs de saisie + le bouton de validation, ex. score d'un match). */}
+      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <AnimatedPressable style={[styles.scrim, { opacity: backdropOpacity }]} onPress={() => onCloseRef.current()} />
         <Animated.View
           style={[
             styles.sheet,
             { backgroundColor: background, paddingBottom: insets.bottom + Spacing.four },
             style,
-            { transform: [{ translateY }] },
+            // marginBottom = hauteur du clavier (web) → la feuille reste au-dessus. 0 sur natif (KAV gère).
+            { marginBottom: kbInset, transform: [{ translateY }] },
           ]}>
           <View style={styles.grab} {...pan.panHandlers}>
             <View style={styles.handle} />
           </View>
           {children}
         </Animated.View>
-      </Animated.View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

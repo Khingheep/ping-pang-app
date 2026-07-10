@@ -63,6 +63,10 @@ export interface FfttPlayer {
 }
 
 export interface FfttMatch {
+  // Id unique du match côté source (PingPocket). Sert à désambiguïser deux matchs
+  // contre le même adversaire le même jour (tournoi/FF2) qui partagent la même clé
+  // naturelle. Le scraper www2 (dormant) ne le fournit pas → optionnel.
+  matchId?: string | null;
   date: string;
   victoire: boolean | null;
   adversaire: { numberId: string | null; nom: string; classement: string | null };

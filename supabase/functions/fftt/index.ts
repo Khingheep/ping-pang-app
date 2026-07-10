@@ -17,7 +17,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { FfttMatch, SearchParams, Sexe } from './fftt.ts';
+import type { FfttMatch, FfttPlayerDetail, SearchParams, Sexe } from './fftt.ts';
 // Backend FFTT temporaire : API publique PingPocket (stateless, sans CAPTCHA).
 // Pour repasser au scraper www2.fftt.com, réimporter depuis './fftt.ts'.
 import {
@@ -104,9 +104,35 @@ async function upsertMatches(
 ): Promise<void> {
   if (!matchs.length) return;
   const now = new Date().toISOString();
-  await supabase.from('fftt_matches').upsert(
-    matchs.map((m) => ({
-      match_uid: matchUid(playerId, m),
+
+  // Certains formats (tournoi, FF2, critérium fédéral) font jouer DEUX fois le
+  // même adversaire le même jour (journée 0) → la clé naturelle
+  // `player:date:adversaire:journée` entre en collision. Or un upsert dont le
+  // batch contient des `match_uid` dupliqués échoue EN BLOC côté Postgres
+  // (« ON CONFLICT DO UPDATE cannot affect row a second time ») → 0 match écrit.
+  // On désambiguïse les seules clés en collision avec l'id PingPocket du match
+  // (unique) — ou, à défaut (matchId null sur le flux live), l'index d'occurrence
+  // dans la journée — puis on déduplique le batch par clé finale (garde-fou ultime).
+  const bases = matchs.map((m) => matchUid(playerId, m));
+  const collision = new Set<string>();
+  const once = new Set<string>();
+  for (const b of bases) (once.has(b) ? collision : once).add(b);
+
+  const rows = new Map<string, Record<string, unknown>>();
+  const occ = new Map<string, number>(); // index d'occurrence par clé en collision (fallback si matchId absent)
+  matchs.forEach((m, i) => {
+    const base = bases[i];
+    // Clé stable par défaut ; en collision on désambiguïse par matchId (id PingPocket,
+    // stable) s'il existe, sinon par l'index d'occurrence dans la journée — pour ne
+    // JAMAIS perdre un match faute de matchId (null en live).
+    let uid = base;
+    if (collision.has(base)) {
+      const n = (occ.get(base) ?? 0) + 1;
+      occ.set(base, n);
+      uid = m.matchId ? `${base}:${m.matchId}` : `${base}#${n}`;
+    }
+    rows.set(uid, {
+      match_uid: uid,
       player_number_id: playerId,
       match_date: isoFromFfttDate(m.date),
       match_date_raw: m.date,
@@ -121,9 +147,10 @@ async function upsertMatches(
       competition_sigle: m.competition?.sigle ?? null,
       point_accuracy: m.pointAccuracy ?? null,
       synced_at: now,
-    })),
-    { onConflict: 'match_uid' },
-  );
+    });
+  });
+
+  await supabase.from('fftt_matches').upsert([...rows.values()], { onConflict: 'match_uid' });
 }
 
 Deno.serve(async (req: Request) => {
@@ -196,18 +223,24 @@ Deno.serve(async (req: Request) => {
       if (!numberId) return json({ error: 'numberId requis' }, 400);
 
       const key = `player:${numberId}`;
-      const cached = await readCache(supabase, key, TTL.player);
-      if (cached) return json({ player: cached, cached: true });
+      const cached = (await readCache(supabase, key, TTL.player)) as FfttPlayerDetail | null;
+      const player = cached ?? (await getDetailFftt(null, numberId));
+      if (!cached) await writeCache(supabase, key, player);
 
-      const player = await getDetailFftt(null, numberId);
-      await writeCache(supabase, key, player);
-      // Persiste l'historique des matchs dans la table dédiée — best-effort.
+      // Persiste l'historique des matchs — best-effort, INDÉPENDANT du cache
+      // profil : on (ré)assure la persistance même sur un cache HIT, ce qui
+      // auto-répare un import antérieur raté (upsert idempotent).
       try {
-        await upsertMatches(supabase, numberId, player.matchs);
+        await upsertMatches(supabase, numberId, player.matchs ?? []);
+        // ELO Paul (migration 0059) : applique les matchs FFTT non traités à
+        // l'ELO app du joueur lié, poids 1.2 — no-op si personne n'est lié à
+        // cette licence. Idempotent (flag elo_applied par match).
+        const { error: applyErr } = await supabase.rpc('apply_fftt_matches', { p_number_id: numberId });
+        if (applyErr) console.error('[fftt] apply_fftt_matches échoué (ignoré):', applyErr);
       } catch (e) {
         console.error('[fftt] upsert fftt_matches échoué (ignoré):', e);
       }
-      return json({ player });
+      return json({ player, cached: !!cached });
     }
 
     if (action === 'history') {

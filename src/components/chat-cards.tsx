@@ -51,7 +51,7 @@ export function ChallengeCard({
 
       {status === 'accepted' ? (
         <View style={styles.statusRow}>
-          <Ionicons name="checkmark-circle" size={18} color={Palette.evergreen} />
+          <Ionicons name="checkmark-circle" size={18} color={Palette.onyx} />
           <ThemedText type="smallBold" themeColor="brand">
             Défi accepté
           </ThemedText>
@@ -140,7 +140,7 @@ export function ScoreCard({
 
       {status === 'confirmed' ? (
         <View style={styles.statusRow}>
-          <Ionicons name="checkmark-circle" size={18} color={Palette.evergreen} />
+          <Ionicons name="checkmark-circle" size={18} color={Palette.onyx} />
           <ThemedText type="smallBold" themeColor="brand">
             Score confirmé · classé
           </ThemedText>
@@ -196,13 +196,13 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   actions: { flexDirection: 'row', gap: Spacing.two },
   btn: { flex: 1, height: 44, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
-  btnPrimary: { backgroundColor: Palette.evergreen },
+  btnPrimary: { backgroundColor: Palette.onyx },
   btnGhost: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
 });

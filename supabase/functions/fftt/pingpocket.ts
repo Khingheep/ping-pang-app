@@ -153,6 +153,7 @@ function toPlayer(l: PPLicensee): FfttPlayer {
 function toMatch(m: PPMatch): FfttMatch {
   const opp = m.opponent.licensee;
   return {
+    matchId: m.id ?? null,
     date: ddmmyy(m.date.epoch),
     victoire: m.isWon,
     adversaire: {

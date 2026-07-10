@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { type Href, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -38,6 +38,9 @@ const NEARBY_MAX_KM = 150;
 
 // Nombre de joueurs « près de toi » affichés par défaut (la recherche, elle, n'est pas limitée).
 const NEARBY_MAX_COUNT = 10;
+
+// Filtres ville du Figma « Neo ». « Autour de moi » (null) = tri par distance réelle.
+const CITY_FILTERS = ['Paris', 'Lyon', 'Bordeaux'];
 
 // Au-delà, un défi refusé n'est plus affiché dans « Mes défis en cours » (évite l'accumulation).
 const DECLINED_TTL_MS = 3 * 24 * 60 * 60 * 1000;
@@ -80,6 +83,7 @@ export default function DefisScreen() {
   const [query, setQuery] = useState('');
   const [code, setCode] = useState('');
   const [joining, setJoining] = useState(false);
+  const [city, setCity] = useState<string | null>(null); // filtre ville actif (null = autour de moi)
 
   // Rafraîchit chaque query au focus d'écran ; no-op réseau tant qu'elle est encore fraîche.
   useRefreshOnFocus(playersQ.refetch);
@@ -180,7 +184,11 @@ export default function DefisScreen() {
   // (position non partagée mais même ville → les comptes récents à Paris remontent quand même),
   // sinon (3) le reste. Sans recherche, on ne garde que les N premiers ; une recherche montre tout.
   const filtered = useMemo(() => {
-    const list = players.filter((p) => p.display_name.toLowerCase().includes(q));
+    let list = players.filter((p) => p.display_name.toLowerCase().includes(q));
+    if (city) {
+      const cf = city.toLowerCase();
+      list = list.filter((p) => (p.city ?? '').toLowerCase().includes(cf));
+    }
     const rank = (p: LeaderboardEntry) => {
       const km = kmTo(coords, p.lat, p.lng);
       if (Number.isFinite(km)) return km; // GPS connu → distance réelle (prioritaire)
@@ -188,8 +196,9 @@ export default function DefisScreen() {
       return 2e6; // ni GPS ni même ville
     };
     const sorted = [...list].sort((a, b) => rank(a) - rank(b));
-    return q ? sorted : sorted.slice(0, NEARBY_MAX_COUNT);
-  }, [players, q, coords, myCity]);
+    // Recherche ou filtre ville → on montre tout ; sinon top N « près de moi ».
+    return q || city ? sorted : sorted.slice(0, NEARBY_MAX_COUNT);
+  }, [players, q, coords, myCity, city]);
 
   const renderPlayer = useCallback(
     ({ item: p }: { item: LeaderboardEntry }) => {
@@ -231,6 +240,32 @@ export default function DefisScreen() {
     <>
       <ThemedText type="title">Défis</ThemedText>
 
+      <TextInput
+        style={styles.search}
+        placeholder="Chercher un joueur..."
+        placeholderTextColor={Palette.grey}
+        value={query}
+        onChangeText={setQuery}
+      />
+
+      {/* Filtres ville (Figma) — pastille evergreen active, contour blanc sinon. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filters}
+        style={styles.filtersRow}>
+        {[null, ...CITY_FILTERS].map((c) => {
+          const active = city === c;
+          return (
+            <Pressable key={c ?? 'near'} style={[styles.pill, active && styles.pillActive]} onPress={() => setCity(c)}>
+              <ThemedText type="smallBold" style={{ color: active ? Palette.whitePP : Palette.grey }}>
+                {c ?? 'Autour de moi'}
+              </ThemedText>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
       <View style={styles.tournRow}>
         <Pressable style={styles.tournoiBtn} onPress={() => router.push('/tournoi-new' as Href)}>
           <Ionicons name="trophy" size={18} color={Palette.evergreen} />
@@ -261,37 +296,39 @@ export default function DefisScreen() {
 
       {tournaments.length > 0 ? (
         <>
-          <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-            Mes tournois
-          </ThemedText>
+          <View style={styles.sectionRow}>
+            <ThemedText type="sectionTitle" themeColor="textSecondary">
+              Mes tournois
+            </ThemedText>
+            <Pressable onPress={() => router.push('/mes-tournois')} hitSlop={6}>
+              <ThemedText type="smallBold" themeColor="brand">
+                Voir tout
+              </ThemedText>
+            </Pressable>
+          </View>
           <View style={styles.list}>
-            {tournaments.map((t) => (
-              <Pressable key={t.id} style={styles.card} onPress={() => router.push({ pathname: '/tournoi', params: { id: t.id } })}>
-                <View style={[styles.tIcon, { backgroundColor: t.status === 'done' ? Palette.lime : Palette.blue }]}>
-                  <Ionicons name="trophy" size={18} color={Palette.evergreen} />
-                </View>
-                <View style={styles.cardMain}>
-                  <ThemedText type="cardTitle" numberOfLines={1}>
-                    {t.name}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Code {t.code} · {T_STATUS[t.status] ?? t.status}
-                  </ThemedText>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
-              </Pressable>
-            ))}
+            {tournaments
+              .filter((t) => t.status !== 'done')
+              .slice(0, 3)
+              .map((t) => (
+                <Pressable key={t.id} style={styles.card} onPress={() => router.push({ pathname: '/tournoi', params: { id: t.id } })}>
+                  <View style={[styles.tIcon, { backgroundColor: Palette.lime }]}>
+                    <Ionicons name="trophy" size={18} color={Palette.evergreen} />
+                  </View>
+                  <View style={styles.cardMain}>
+                    <ThemedText type="cardTitle" numberOfLines={1}>
+                      {t.name}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {[t.city, `Code ${t.code}`, T_STATUS[t.status] ?? t.status].filter(Boolean).join(' · ')}
+                    </ThemedText>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={Palette.grey} />
+                </Pressable>
+              ))}
           </View>
         </>
       ) : null}
-
-      <TextInput
-        style={styles.search}
-        placeholder="Chercher un joueur..."
-        placeholderTextColor={Palette.grey}
-        value={query}
-        onChangeText={setQuery}
-      />
 
       {challenges.length > 0 ? (
         <>
@@ -460,20 +497,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 1,
   },
-  joinBtn: { backgroundColor: Palette.evergreen, borderRadius: Radius.sm, paddingHorizontal: Spacing.four, alignItems: 'center', justifyContent: 'center' },
+  joinBtn: { backgroundColor: Palette.onyx, borderRadius: Radius.sm, paddingHorizontal: Spacing.four, alignItems: 'center', justifyContent: 'center' },
   search: {
     height: 52,
-    marginTop: Spacing.three,
-    borderRadius: Radius.sm,
+    marginTop: Spacing.md,
+    borderRadius: Radius.pill,
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    paddingHorizontal: Spacing.three,
+    paddingHorizontal: Spacing.lg,
     color: Palette.onyx,
-    fontFamily: 'OpenSauceOne-Regular',
-    fontSize: 15,
+    fontFamily: 'OpenSauceOne-SemiBold',
+    fontSize: 16,
   },
+  filtersRow: { marginTop: Spacing.md },
+  filters: { gap: Spacing.sm, paddingRight: Spacing.xl },
+  pill: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.pill,
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+  },
+  pillActive: { backgroundColor: Palette.ink2 },
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.five,
+    marginBottom: Spacing.two,
+  },
   empty: {
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
@@ -488,8 +540,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
@@ -499,8 +549,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
     backgroundColor: Palette.white,
-    borderWidth: 1,
-    borderColor: Palette.evergreen,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
@@ -513,12 +563,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
   },
-  acceptBtn: { backgroundColor: Palette.evergreen, borderRadius: Radius.xs, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
+  acceptBtn: { backgroundColor: Palette.onyx, borderRadius: Radius.xs, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   scoreBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     borderRadius: Radius.xs,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
@@ -526,7 +576,7 @@ const styles = StyleSheet.create({
   statusPill: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   cardMain: { flex: 1 },
   defier: {
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     borderRadius: Radius.xs,
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,

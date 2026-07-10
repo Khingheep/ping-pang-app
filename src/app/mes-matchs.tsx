@@ -34,7 +34,7 @@ export default function MesMatchsScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Tous mes matchs</ThemedText>
@@ -102,7 +102,7 @@ const styles = StyleSheet.create({
   },
   tabs: { flexDirection: 'row', gap: Spacing.two, paddingHorizontal: Spacing.four, marginBottom: Spacing.three },
   tab: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
-  tabOn: { backgroundColor: Palette.evergreen },
+  tabOn: { backgroundColor: Palette.ink2 },
   tabOff: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   empty: {

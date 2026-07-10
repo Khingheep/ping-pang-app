@@ -91,7 +91,7 @@ export default function ChallengeScreen() {
             </View>
           </View>
 
-          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+          <Pressable style={styles.backBtn} onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}>
             <ThemedText type="cardTitle">Retour aux défis</ThemedText>
           </Pressable>
         </SafeAreaView>
@@ -104,7 +104,7 @@ export default function ChallengeScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Défier</ThemedText>
@@ -208,18 +208,18 @@ const styles = StyleSheet.create({
   },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.five },
   lbl: { marginTop: Spacing.five, marginBottom: Spacing.two },
-  heroCard: { backgroundColor: Palette.evergreen, borderRadius: Radius.md, padding: Spacing.four, gap: Spacing.one },
+  heroCard: { backgroundColor: Palette.onyx, borderRadius: Radius.md, padding: Spacing.four, gap: Spacing.one },
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   reco: { backgroundColor: Palette.lime, borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.half },
   formatRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
   fPill: { paddingVertical: Spacing.three, paddingHorizontal: Spacing.four, borderRadius: Radius.xs, alignItems: 'center' },
-  fActive: { backgroundColor: Palette.evergreen },
+  fActive: { backgroundColor: Palette.ink2 },
   fIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   submit: {
     margin: Spacing.four,
     height: 56,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

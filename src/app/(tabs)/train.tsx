@@ -13,19 +13,19 @@ import {
   fetchTrainingStats,
   formatDuration,
   formatHours,
+  partnersLabel,
   type ActivityPeriod,
   type SessionTemplate,
   type TrainingSession,
   type TrainingStats,
 } from '@/lib/training/sessions';
 
-const STROKE_COLORS = [Palette.purple, Palette.blue, Palette.lime, Palette.evergreen, Palette.green, Palette.grey];
 const CHART_H = 90;
 
 const PERIODS: { key: ActivityPeriod; label: string }[] = [
-  { key: 'week', label: 'Semaine' },
+  { key: 'week', label: 'Sem' },
   { key: 'month', label: 'Mois' },
-  { key: 'year', label: 'Année' },
+  { key: 'year', label: 'An' },
 ];
 
 export default function TrainScreen() {
@@ -61,8 +61,8 @@ export default function TrainScreen() {
           <ThemedText type="title">Entraînements</ThemedText>
 
           <Pressable style={styles.logBtn} onPress={() => router.push('/new-training')}>
-            <Ionicons name="add" size={20} color={Palette.evergreen} />
-            <ThemedText type="cardTitle" themeColor="brand">
+            <Ionicons name="add" size={22} color={Palette.evergreen} />
+            <ThemedText type="cardTitle" style={{ color: Palette.evergreen }}>
               Renseigner mon entraînement
             </ThemedText>
           </Pressable>
@@ -75,7 +75,7 @@ export default function TrainScreen() {
               contentContainerStyle={styles.tplRow}
               style={styles.tplScroll}>
               {templates.map((t) => {
-                const partnerLabel = t.isSolo ? 'Solo' : t.partner?.name ?? t.partnerLevel ?? null;
+                const partnerLabel = t.isSolo ? 'Solo' : partnersLabel(t) ?? t.partnerLevel ?? null;
                 return (
                   <Pressable
                     key={t.id}
@@ -85,7 +85,7 @@ export default function TrainScreen() {
                       <ThemedText type="cardTitle" themeColor="brand">
                         {formatDuration(t.durationMin)}
                       </ThemedText>
-                      <Ionicons name="repeat" size={16} color={Palette.evergreen} />
+                      <Ionicons name="repeat" size={16} color={Palette.onyx} />
                     </View>
                     <ThemedText type="small" numberOfLines={2}>
                       {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
@@ -125,7 +125,7 @@ export default function TrainScreen() {
                 Répartition par coup
               </ThemedText>
               <View style={styles.card}>
-                {stats.byStroke.map((s, i) => (
+                {stats.byStroke.map((s) => (
                   <View key={s.stroke} style={styles.strokeRow}>
                     <View style={styles.strokeHead}>
                       <ThemedText type="smallBold">{s.stroke}</ThemedText>
@@ -137,7 +137,7 @@ export default function TrainScreen() {
                       <View
                         style={[
                           styles.fill,
-                          { width: `${Math.max(6, (s.min / maxStroke) * 100)}%`, backgroundColor: STROKE_COLORS[i % STROKE_COLORS.length] },
+                          { width: `${Math.max(6, (s.min / maxStroke) * 100)}%`, backgroundColor: Palette.onyx },
                         ]}
                       />
                     </View>
@@ -191,7 +191,13 @@ export default function TrainScreen() {
                             style={{
                               width: '70%',
                               height: Math.max(3, (b.min / maxBar) * CHART_H),
-                              backgroundColor: b.min > 0 ? Palette.purple : Palette.border,
+                              // Barre courante (dernière de la série) en evergreen, le reste en violet.
+                              backgroundColor:
+                                b.min > 0
+                                  ? i === activitySeries.length - 1
+                                    ? Palette.onyx
+                                    : Palette.grey
+                                  : Palette.border,
                               borderRadius: 3,
                             }}
                           />
@@ -261,9 +267,9 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
   logBtn: {
     marginTop: Spacing.three,
-    height: 52,
-    borderRadius: Radius.sm,
-    backgroundColor: Palette.purple,
+    height: 56,
+    borderRadius: Radius.xs,
+    backgroundColor: Palette.lime,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -275,20 +281,18 @@ const styles = StyleSheet.create({
     width: 168,
     gap: Spacing.one,
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
   tplHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   hero: {
     marginTop: Spacing.four,
-    backgroundColor: Palette.evergreen,
-    borderRadius: Radius.md,
+    backgroundColor: Palette.onyx,
+    borderRadius: Radius.sm,
     padding: Spacing.four,
     gap: Spacing.one,
   },
-  heroBig: { color: Palette.lime, fontSize: 44, lineHeight: 48 },
+  heroBig: { color: Palette.lime }, // taille = token Display (32) via type="metric"
   weekTag: {
     alignSelf: 'flex-start',
     marginTop: Spacing.two,
@@ -307,25 +311,21 @@ const styles = StyleSheet.create({
   },
   segment: {
     flexDirection: 'row',
-    gap: Spacing.one,
+    gap: Spacing.two,
     marginBottom: Spacing.two,
-    backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
-    borderRadius: Radius.pill,
-    padding: Spacing.one,
   },
   segmentBtn: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: Spacing.two,
-    borderRadius: Radius.pill,
-  },
-  segmentBtnActive: { backgroundColor: Palette.evergreen },
-  card: {
+    borderRadius: Radius.xs,
     backgroundColor: Palette.white,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Palette.border,
+  },
+  segmentBtnActive: { backgroundColor: Palette.ink2, borderColor: Palette.ink2 },
+  card: {
+    backgroundColor: Palette.white,
     borderRadius: Radius.sm,
     padding: Spacing.four,
     gap: Spacing.three,
@@ -350,8 +350,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },

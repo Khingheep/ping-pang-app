@@ -21,8 +21,9 @@ import {
   useFriendStatus,
   type FriendStatus,
 } from '@/lib/social/friends';
+import { reportPlayer } from '@/lib/players/moderation';
 import { formatDuration, useLastTrainingSession, useTrainingStats } from '@/lib/training/sessions';
-import { notify } from '@/lib/ui/alert';
+import { choose, notify } from '@/lib/ui/alert';
 
 const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
   none: { icon: 'person-add-outline', label: 'Ajouter en ami' },
@@ -92,6 +93,28 @@ export default function PlayerScreen() {
     }
   }
 
+  /** Signalement pour fraude (Paul 07/07) : motif choisi → ligne player_reports, visible admin. */
+  function onReport() {
+    if (!myId || !p) return;
+    const send = async (reason: string) => {
+      try {
+        await reportPlayer({ reporterId: myId, reportedId: p.id, reason });
+        notify('Signalement envoyé', 'Un admin va y jeter un œil. Merci !');
+      } catch (e) {
+        notify('Signalement', e instanceof Error ? e.message : 'Réessaie plus tard.');
+      }
+    };
+    choose({
+      title: `Signaler ${p.display_name} ?`,
+      message: 'Le signalement remonte aux admins Ping Pang Paris.',
+      options: [
+        { text: 'Triche / faux score', onPress: () => void send('Triche / faux score') },
+        { text: 'Usurpation d’identité', onPress: () => void send('Usurpation d’identité (faux compte)'), destructive: true },
+        { text: 'Autre comportement', onPress: () => void send('Comportement inapproprié') },
+      ],
+    });
+  }
+
   const isMe = id === session?.user?.id;
   const elo = p?.elo ?? 0;
   const level = levelForElo(elo);
@@ -101,7 +124,7 @@ export default function PlayerScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Profil</ThemedText>
@@ -116,7 +139,7 @@ export default function PlayerScreen() {
             </ThemedText>
             {p?.fftt_club ? (
               <View style={styles.heroMetaItem}>
-                <Ionicons name="ribbon-outline" size={15} color={Palette.evergreen} />
+                <Ionicons name="ribbon-outline" size={15} color={Palette.onyx} />
                 <ThemedText type="default" themeColor="textSecondary" numberOfLines={1}>
                   {p.fftt_club}
                 </ThemedText>
@@ -162,13 +185,13 @@ export default function PlayerScreen() {
                 disabled={friendBusy}
                 onPress={onFriend}>
                 {friendBusy ? (
-                  <ActivityIndicator color={Palette.evergreen} />
+                  <ActivityIndicator color={Palette.onyx} />
                 ) : (
                   <>
                     <Ionicons
                       name={FRIEND_CFG[friend].icon}
                       size={18}
-                      color={friend === 'pending_in' ? Palette.whitePP : Palette.evergreen}
+                      color={friend === 'pending_in' ? Palette.whitePP : Palette.onyx}
                     />
                     <ThemedText type="smallBold" themeColor={friend === 'pending_in' ? 'onBrand' : 'brand'}>
                       {FRIEND_CFG[friend].label}
@@ -200,6 +223,13 @@ export default function PlayerScreen() {
                 onPress={() => router.push({ pathname: '/chat', params: { id: p.id, name: p.display_name } })}>
                 <Ionicons name="chatbubble-outline" size={18} color={Palette.onyx} />
                 <ThemedText type="smallBold">Message</ThemedText>
+              </Pressable>
+
+              <Pressable style={styles.reportBtn} onPress={onReport} hitSlop={8}>
+                <Ionicons name="flag-outline" size={14} color={Palette.grey} />
+                <ThemedText type="small" themeColor="textSecondary">
+                  Signaler ce joueur
+                </ThemedText>
               </Pressable>
 
               {p.stats_visible !== false && matches.length ? (
@@ -366,15 +396,15 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     backgroundColor: Palette.white,
     borderWidth: 1,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
   },
-  friendAccept: { backgroundColor: Palette.evergreen, borderColor: Palette.evergreen },
+  friendAccept: { backgroundColor: Palette.onyx, borderColor: Palette.onyx },
   friendIs: { backgroundColor: Palette.lime, borderColor: Palette.lime },
   defier: {
     marginTop: Spacing.two,
     height: 54,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     flexDirection: 'row',
     gap: Spacing.two,
     alignItems: 'center',
@@ -390,6 +420,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
+  },
+  reportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    paddingVertical: Spacing.two,
+    alignSelf: 'center',
   },
   h2hCard: {
     marginTop: Spacing.two,

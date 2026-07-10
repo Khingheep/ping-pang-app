@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { levelForElo, startingElo } from '@/lib/elo';
 import { qk, STALE } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase/client';
 import { matchVenueByName } from '@/lib/venues/venues';
@@ -187,10 +188,25 @@ export function useFfttCommonOpponents(myFftt: string | null | undefined, theirF
 /** Lie le compte FFTT au profil : enregistre fftt_id + fftt_points (force temps réel) + club. */
 export async function linkFfttToProfile(userId: string, p: FfttPlayer): Promise<number | null> {
   const points = await resolveFfttPoints(p);
-  const { error } = await supabase
-    .from('players')
-    .update({ fftt_id: p.numberId, fftt_points: points, fftt_club: p.club?.nom ?? null })
-    .eq('id', userId);
+  const update: Record<string, unknown> = {
+    fftt_id: p.numberId,
+    fftt_points: points,
+    fftt_club: p.club?.nom ?? null,
+  };
+  // Seede l'ELO/le niveau depuis les points FFTT (départ = points + 500), comme le
+  // fait l'onboarding — MAIS uniquement si le joueur n'a pas encore d'ELO propre
+  // (compte neuf à 1000 par défaut, 1200 = ancien défaut pré-0059) : on ne veut
+  // jamais écraser un classement déjà gagné en match.
+  if (points != null) {
+    const { data } = await supabase.from('players').select('elo').eq('id', userId).maybeSingle();
+    const cur = (data as { elo: number | null } | null)?.elo ?? null;
+    if (cur == null || cur === 1000 || cur === 1200) {
+      const e = startingElo(points);
+      update.elo = e;
+      update.level = levelForElo(e).key;
+    }
+  }
+  const { error } = await supabase.from('players').update(update).eq('id', userId);
   if (error) throw error;
   // Best-effort : si le club FFTT correspond à un lieu connu et qu'aucun club maison n'est défini,
   // on le pré-remplit. N'interrompt jamais le lien (colonne/match absents → on ignore).

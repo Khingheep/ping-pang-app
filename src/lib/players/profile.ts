@@ -218,6 +218,7 @@ export async function fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> 
   const { data } = await supabase
     .from('players')
     .select(LIST_COLS)
+    .eq('is_guest', false) // les invités de tournoi (sans compte) ne comptent pas au classement
     .order('elo', { ascending: false })
     .limit(limit);
   return (data as LeaderboardEntry[] | null) ?? [];
@@ -228,6 +229,7 @@ export async function fetchOtherPlayers(excludeId: string, limit = 50): Promise<
   const { data } = await supabase
     .from('players')
     .select(LIST_COLS)
+    .eq('is_guest', false) // masque les invités de tournoi
     .neq('id', excludeId)
     .order('elo', { ascending: false })
     .limit(limit);

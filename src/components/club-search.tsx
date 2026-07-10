@@ -36,7 +36,7 @@ export function ClubSearch({
       {selected ? (
         <View style={styles.selected}>
           <View style={styles.selIcon}>
-            <Ionicons name={selected.indoor ? 'home' : 'sunny'} size={18} color={Palette.evergreen} />
+            <Ionicons name={selected.indoor ? 'home' : 'sunny'} size={18} color={Palette.onyx} />
           </View>
           <View style={{ flex: 1 }}>
             <ThemedText type="cardTitle" numberOfLines={1}>
@@ -84,7 +84,7 @@ export function ClubSearch({
                   </ThemedText>
                 ) : null}
               </View>
-              {on ? <Ionicons name="checkmark-circle" size={20} color={Palette.evergreen} /> : null}
+              {on ? <Ionicons name="checkmark-circle" size={20} color={Palette.onyx} /> : null}
             </Pressable>
           );
         })}
@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     backgroundColor: Palette.lime,
     borderWidth: 1,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.onyx,
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     padding: Spacing.two,
   },
-  rowOn: { borderColor: Palette.evergreen },
+  rowOn: { borderColor: Palette.onyx },
   pin: { width: 32, height: 32, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center' },
   empty: { padding: Spacing.three },
 });

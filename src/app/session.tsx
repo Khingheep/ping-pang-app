@@ -134,7 +134,7 @@ export default function SessionDetailScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Publication</ThemedText>
@@ -144,7 +144,7 @@ export default function SessionDetailScreen() {
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={8}>
           {loading ? (
             <View style={styles.center}>
-              <ActivityIndicator color={Palette.evergreen} />
+              <ActivityIndicator color={Palette.onyx} />
             </View>
           ) : !item ? (
             <View style={styles.center}>
@@ -314,7 +314,7 @@ const styles = StyleSheet.create({
   photoFull: { width: '100%', height: 220, borderRadius: Radius.sm, backgroundColor: Palette.whitePP },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.one, marginTop: Spacing.two },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Palette.border },
-  dotActive: { backgroundColor: Palette.evergreen, width: 18 },
+  dotActive: { backgroundColor: Palette.onyx, width: 18 },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.four, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border, paddingTop: Spacing.two },
@@ -357,6 +357,6 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
-  sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: Palette.evergreen, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: Palette.onyx, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { backgroundColor: Palette.grey },
 });

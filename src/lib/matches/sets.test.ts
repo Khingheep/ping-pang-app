@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  autofillOpponent,
   countSets,
   flipSetScores,
   formatSetScores,
@@ -57,6 +58,32 @@ describe('validateMatch - vainqueur à ceil(bestOf/2)', () => {
     expect(validateMatch([{ a: 11, b: 7 }, { a: 11, b: 9 }], 3).ok).toBe(true);
     expect(validateMatch([{ a: 11, b: 7 }], 3).ok).toBe(false);
     expect(validateMatch([], 5).ok).toBe(false);
+  });
+});
+
+describe('autofillOpponent - hack UX « perdant tapé → 11 en face »', () => {
+  it('score perdant (0–9) avec opposé vide → 11', () => {
+    expect(autofillOpponent('7', '', false)).toBe('11');
+    expect(autofillOpponent('0', '', false)).toBe('11');
+    expect(autofillOpponent('9', '', false)).toBe('11');
+  });
+  it('ne recouvre jamais une saisie manuelle de l’opposé', () => {
+    expect(autofillOpponent('7', '11', false)).toBeNull();
+    expect(autofillOpponent('7', '5', false)).toBeNull();
+  });
+  it('remet à 11 si l’opposé était déjà auto-rempli (correction du perdant)', () => {
+    expect(autofillOpponent('9', '11', true)).toBe('11');
+  });
+  it('deuce : perdant ≥ 10 alors que l’opposé était auto → on retire le 11', () => {
+    expect(autofillOpponent('10', '11', true)).toBe('');
+    expect(autofillOpponent('12', '11', true)).toBe('');
+  });
+  it('cellule vidée alors que l’opposé était auto → on retire le 11', () => {
+    expect(autofillOpponent('', '11', true)).toBe('');
+  });
+  it('≥ 10 sans opposé auto → ne touche à rien (saisie manuelle du deuce)', () => {
+    expect(autofillOpponent('12', '', false)).toBeNull();
+    expect(autofillOpponent('10', '', false)).toBeNull();
   });
 });
 

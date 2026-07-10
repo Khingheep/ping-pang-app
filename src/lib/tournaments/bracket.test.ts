@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assignPoules,
+  type BracketPair,
   computeFinalRanking,
   computePlayerRecords,
   computePouleStandings,
@@ -10,6 +11,8 @@ import {
   pouleMatchOrder,
   poulesOf,
   seedBracketRound0,
+  seedDirectBracket,
+  snakeSeedOrder,
 } from './bracket';
 import type { TournamentMatch, TournamentPlayer } from './tournaments';
 
@@ -20,7 +23,7 @@ function player(
   seed: number | null = null,
   extra: { ranking?: number | null; club?: string | null } = {},
 ): TournamentPlayer {
-  return { player_id: id, name: id.toUpperCase(), avatar: null, elo, poule, seed, ranking: extra.ranking ?? null, club: extra.club ?? null };
+  return { player_id: id, name: id.toUpperCase(), avatar: null, elo, poule, seed, ranking: extra.ranking ?? null, club: extra.club ?? null, isGuest: false, organizer: false, plays: true };
 }
 
 function pmatch(poule: string, a: string, b: string, winner: string | null): TournamentMatch {
@@ -300,5 +303,92 @@ describe('pairWinners', () => {
       { playerA: 'w0', playerB: 'w1' },
       { playerA: 'w2', playerB: null },
     ]);
+  });
+});
+
+// ───────────────────────── Tableau direct (formule serpent, demandée par Paul) ─────────────────────────
+
+/** Joueurs classés par ELO décroissant → p1 = meilleur (tête de série 1) … pn = dernier. */
+function eloPlayers(n: number): TournamentPlayer[] {
+  return Array.from({ length: n }, (_, i) => player(`p${i + 1}`, 2000 - i * 10));
+}
+
+/** Déroule un tableau en supposant que la meilleure tête de série gagne toujours (byes = auto-avance). */
+function simulateBracket(round0: BracketPair[], seedOf: (id: string) => number): BracketPair[][] {
+  const rounds: BracketPair[][] = [];
+  let round = round0;
+  while (round.length >= 1) {
+    rounds.push(round);
+    if (round.length === 1) break;
+    const winners = round.map((p) => {
+      if (!p.playerA) return p.playerB!;
+      if (!p.playerB) return p.playerA!;
+      return seedOf(p.playerA) < seedOf(p.playerB) ? p.playerA : p.playerB;
+    });
+    round = pairWinners(winners);
+  }
+  return rounds;
+}
+
+describe('snakeSeedOrder - placement serpent', () => {
+  it('size 4 → [1,3,2,4] (demies 1-3 et 2-4)', () => {
+    expect(snakeSeedOrder(4)).toEqual([1, 3, 2, 4]);
+  });
+  it('size 2 → [1,2] (finale directe)', () => {
+    expect(snakeSeedOrder(2)).toEqual([1, 2]);
+  });
+  it('couvre 1..size exactement une fois', () => {
+    for (const size of [4, 8, 16, 32, 64]) {
+      const order = snakeSeedOrder(size);
+      expect(order).toHaveLength(size);
+      expect([...order].sort((a, b) => a - b)).toEqual(Array.from({ length: size }, (_, i) => i + 1));
+    }
+  });
+});
+
+describe('seedDirectBracket - seeding ELO + serpent', () => {
+  it('4 joueurs seedés par ELO → demies p1-p3 et p2-p4', () => {
+    expect(seedDirectBracket(eloPlayers(4))).toEqual([
+      { playerA: 'p1', playerB: 'p3' },
+      { playerA: 'p2', playerB: 'p4' },
+    ]);
+  });
+
+  it('8 joueurs : demies 1-3 et 2-4, finale 1-2, n°1 & n°2 aux extrémités', () => {
+    const players = eloPlayers(8);
+    const seedOf = Object.fromEntries(players.map((p, i) => [p.player_id, i + 1]));
+    const rounds = simulateBracket(seedDirectBracket(players), (id) => seedOf[id]);
+    const seedsOf = (r: BracketPair[]) => r.map((p) => [seedOf[p.playerA!], seedOf[p.playerB!]].sort((a, b) => a - b));
+    expect(rounds).toHaveLength(3); // quarts, demies, finale
+    expect(seedsOf(rounds[1])).toEqual([[1, 3], [2, 4]]); // demies = formule Paul
+    expect(seedsOf(rounds[2])).toEqual([[1, 2]]); // finale
+  });
+
+  it('seeding par ELO uniquement (ignore le classement FFTT, contrairement aux poules)', () => {
+    const players = [
+      player('faibleElo', 1200, null, null, { ranking: 3000 }), // très bien classé FFTT mais petit ELO
+      player('grosElo', 1900, null, null, { ranking: null }), // non licencié mais gros ELO
+    ];
+    const pairs = seedDirectBracket(players);
+    expect(pairs).toEqual([{ playerA: 'grosElo', playerB: 'faibleElo' }]); // grosElo = tête de série 1
+  });
+
+  it('non-puissance de 2 → complété par des exempts (bye = playerB null)', () => {
+    const pairs = seedDirectBracket(eloPlayers(6)); // 6 → tableau à 8, 2 exempts
+    expect(pairs).toHaveLength(4);
+    const byes = pairs.filter((p) => !p.playerA || !p.playerB);
+    expect(byes).toHaveLength(2);
+    const present = pairs.flatMap((p) => [p.playerA, p.playerB]).filter(Boolean);
+    expect(new Set(present).size).toBe(6); // les 6 joueurs sont bien placés
+  });
+
+  it('exempts placés sur les têtes de série (le n°1 ne joue pas un exempt contre un autre exempt)', () => {
+    const pairs = seedDirectBracket(eloPlayers(6));
+    // Aucun match ne doit opposer deux exempts (playerA ET playerB null).
+    expect(pairs.every((p) => p.playerA || p.playerB)).toBe(true);
+  });
+
+  it('moins de 2 joueurs → aucun match', () => {
+    expect(seedDirectBracket(eloPlayers(1))).toEqual([]);
   });
 });

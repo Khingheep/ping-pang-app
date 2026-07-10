@@ -22,7 +22,7 @@ import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { ffttPointsToElo, levelForElo } from '@/lib/elo';
+import { levelForElo, startingElo } from '@/lib/elo';
 import {
   searchFftt,
   fetchFfttByLicence,
@@ -95,7 +95,7 @@ function PermRow({
         disabled={granted || status === 'loading'}
         onPress={onPress}>
         {status === 'loading' ? (
-          <ActivityIndicator color={Palette.evergreen} size="small" />
+          <ActivityIndicator color={Palette.onyx} size="small" />
         ) : granted ? (
           <Ionicons name="checkmark" size={20} color={Palette.evergreen} />
         ) : (
@@ -325,7 +325,7 @@ export default function OnboardingScreen() {
         const pts = await resolveFfttPoints(fftt);
         patch.fftt_points = pts;
         if (pts) {
-          const e = ffttPointsToElo(pts);
+          const e = startingElo(pts);
           patch.elo = e;
           patch.level = levelForElo(e).key;
         }
@@ -362,7 +362,7 @@ export default function OnboardingScreen() {
             : true;
 
   const startPts = fftt ? ffttSeedPoints(fftt) : null;
-  const startElo = startPts != null ? ffttPointsToElo(startPts) : null;
+  const startElo = startPts != null ? startingElo(startPts) : null;
   // Sur le 1er écran, la flèche n'a de sens que s'il y a un écran derrière (sinon GO_BACK non géré).
   const showBack = step <= STEP.PASSWORD && (step !== STEP.NAME || router.canGoBack());
 
@@ -502,7 +502,7 @@ export default function OnboardingScreen() {
             {step === STEP.FFTT && (
               ffttSearching ? (
                 <View style={styles.center}>
-                  <ActivityIndicator color={Palette.evergreen} />
+                  <ActivityIndicator color={Palette.onyx} />
                   <ThemedText type="default" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>On cherche ton classement FFTT…</ThemedText>
                 </View>
               ) : ffttError ? (
@@ -512,7 +512,7 @@ export default function OnboardingScreen() {
                     Le service FFTT est momentanément indisponible. Réessaie, ou continue et lie ta licence plus tard dans les réglages.
                   </ThemedText>
                   <Pressable onPress={retryFfttSearch} style={styles.retryBtn}>
-                    <Ionicons name="refresh" size={18} color={Palette.evergreen} />
+                    <Ionicons name="refresh" size={18} color={Palette.onyx} />
                     <ThemedText type="smallBold" themeColor="brand">Réessayer</ThemedText>
                   </Pressable>
                 </View>
@@ -525,7 +525,7 @@ export default function OnboardingScreen() {
                       const on = fftt?.numberId === p.numberId;
                       // Points/ELO connus seulement après sélection (détail chargé via chooseFftt).
                       const rowPts = on ? ffttSeedPoints(fftt) : null;
-                      const elo = rowPts != null ? ffttPointsToElo(rowPts) : null;
+                      const elo = rowPts != null ? startingElo(rowPts) : null;
                       return (
                         <Pressable key={p.numberId} onPress={() => chooseFftt(p)} style={[styles.ffttRow, on ? styles.cardOn : styles.cardOff]}>
                           <View style={{ flex: 1 }}>
@@ -629,7 +629,7 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, height: 38, justifyContent: 'center' },
   dots: { flexDirection: 'row', gap: Spacing.one, paddingTop: Spacing.two, paddingHorizontal: Spacing.four },
   dot: { height: 4, borderRadius: 2, flex: 1 },
-  dotOn: { backgroundColor: Palette.evergreen },
+  dotOn: { backgroundColor: Palette.onyx },
   dotOff: { backgroundColor: Palette.border },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.five, paddingBottom: Spacing.four, gap: Spacing.two, flexGrow: 1 },
   sub: { marginTop: Spacing.one, marginBottom: Spacing.two },
@@ -656,7 +656,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: Radius.sm,
     borderWidth: 1,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
   },
   photoWrap: { alignSelf: 'center', width: 128, height: 128, marginTop: Spacing.five },
   photo: { width: 128, height: 128, borderRadius: 64, backgroundColor: Palette.white, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
@@ -668,7 +668,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -677,7 +677,7 @@ const styles = StyleSheet.create({
   list: { gap: Spacing.two, marginTop: Spacing.three },
   typeCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.four, borderRadius: Radius.sm, borderWidth: 1 },
   typeEmoji: { fontSize: 28 },
-  cardOn: { backgroundColor: Palette.lime, borderColor: Palette.evergreen },
+  cardOn: { backgroundColor: Palette.lime, borderColor: Palette.onyx },
   cardOff: { backgroundColor: SURFACE, borderColor: Palette.border },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
   gridCard: { width: '48%', aspectRatio: 1.4, borderRadius: Radius.sm, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.three },
@@ -699,17 +699,17 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: Radius.xs,
     borderWidth: 1,
-    borderColor: Palette.evergreen,
+    borderColor: Palette.border,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.three,
   },
   permBtnOn: { backgroundColor: Palette.lime },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: Palette.grey },
-  radioOn: { borderColor: Palette.evergreen, backgroundColor: Palette.evergreen },
+  radioOn: { borderColor: Palette.onyx, backgroundColor: Palette.onyx },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.six },
   logo: { width: 120, height: 120, borderRadius: 60, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
   logoEmoji: { fontSize: 52, lineHeight: 64, textAlign: 'center' },
   footer: { padding: Spacing.four },
-  nextBtn: { height: 54, borderRadius: Radius.sm, backgroundColor: Palette.evergreen, alignItems: 'center', justifyContent: 'center' },
+  nextBtn: { height: 54, borderRadius: Radius.sm, backgroundColor: Palette.onyx, alignItems: 'center', justifyContent: 'center' },
 });

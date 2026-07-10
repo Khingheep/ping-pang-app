@@ -1,12 +1,11 @@
 /**
- * Onglet ELO-RANKING - carte « Mon classement » (ELO + delta 7 jours)
- * + leaderboard filtrable Monde/France/Paris/Amis.
+ * Onglet « Ranking Mondial » (Figma « Neo ») : podium top 3 (blocs colorés) + leaderboard
+ * filtrable Tous/France/Paris/Amis. La ligne du joueur courant est surlignée lime.
+ * Le rang/ELO/delta 7 j reste affiché en résumé sous le titre (aucune perte de donnée).
  *
- * Re-skin du Figma « ELO-RANKING » dans notre thème clair vert/blanc.
  * Données via react-query (cache + refetch au focus) ; liste virtualisée en FlatList.
  */
 
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
@@ -20,7 +19,14 @@ import { useEloDelta, useLeaderboard, useMyProfile, type LeaderboardEntry } from
 import { useRefreshOnFocus } from '@/lib/query/use-refresh-on-focus';
 import { useFriendIds } from '@/lib/social/friends';
 
-const FILTERS = ['Monde', 'France', 'Paris', 'Amis'] as const;
+const FILTERS = ['Tous', 'France', 'Paris', 'Amis'] as const;
+
+// Ordre visuel du podium : #2 à gauche, #1 au centre (surélevé), #3 à droite.
+const PODIUM = [
+  { slot: 1, rank: 2, bg: Palette.blue, height: 150 },
+  { slot: 0, rank: 1, bg: Palette.lime, height: 180 },
+  { slot: 2, rank: 3, bg: Palette.purple, height: 150 },
+] as const;
 
 function Separator() {
   return <View style={styles.separator} />;
@@ -62,6 +68,10 @@ export default function RankingScreen() {
     [rows, filter, friendIds, myId],
   );
 
+  // Podium = 3 premiers du filtre courant ; la liste démarre au 4e.
+  const top3 = filtered.slice(0, 3);
+  const restData = useMemo(() => filtered.slice(3), [filtered]);
+
   const renderItem = useCallback(
     ({ item: e, index }: { item: LeaderboardEntry; index: number }) => {
       const mine = e.id === myId;
@@ -70,9 +80,9 @@ export default function RankingScreen() {
           onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}
           style={[styles.row, mine && styles.rowMine]}>
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.rank}>
-            {index + 1}
+            {index + 4}
           </ThemedText>
-          <Avatar name={e.display_name} size={36} />
+          <Avatar name={e.display_name} uri={e.avatar_url} size={36} />
           <View style={styles.rowMain}>
             <ThemedText type="cardTitle" numberOfLines={1}>
               {e.display_name}
@@ -94,37 +104,19 @@ export default function RankingScreen() {
 
   const header = (
     <>
-      <ThemedText type="title">ELO-Ranking</ThemedText>
+      <ThemedText type="title">Ranking Mondial</ThemedText>
 
-      {/* Carte Mon classement */}
-      <View style={styles.meCard}>
-        <View style={styles.meTop}>
-          <ThemedText type="metric" themeColor="onBrand" style={styles.meElo}>
-            {elo}
+      {myRank > 0 ? (
+        <View style={styles.meLine}>
+          <ThemedText type="small" themeColor="textSecondary">
+            #{myRank} mondial · ELO {elo}
           </ThemedText>
-          <View style={styles.meRight}>
-            <ThemedText type="smallBold" style={{ color: Palette.lime }}>
-              Mon classement
-            </ThemedText>
-            {myRank > 0 ? (
-              <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.85 }}>
-                #{myRank} mondial
-              </ThemedText>
-            ) : null}
-          </View>
-        </View>
-        <View style={styles.meDelta}>
-          <Ionicons
-            name={delta7 >= 0 ? 'caret-up' : 'caret-down'}
-            size={16}
-            color={delta7 >= 0 ? Palette.lime : Palette.red}
-          />
-          <ThemedText type="smallBold" style={{ color: delta7 >= 0 ? Palette.lime : Palette.red }}>
-            {delta7 >= 0 ? '+' : ''}
-            {delta7} · 7 derniers jours
+          <ThemedText type="smallBold" style={{ color: delta7 >= 0 ? Palette.onyx : Palette.redInk }}>
+            {delta7 >= 0 ? '▲ +' : '▼ '}
+            {delta7} (7j)
           </ThemedText>
         </View>
-      </View>
+      ) : null}
 
       {/* Filtres */}
       <View style={styles.filters}>
@@ -133,12 +125,39 @@ export default function RankingScreen() {
             key={f}
             onPress={() => setFilter(i)}
             style={[styles.pill, filter === i ? styles.pillActive : styles.pillIdle]}>
-            <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'text'}>
+            <ThemedText type="smallBold" themeColor={filter === i ? 'onBrand' : 'textSecondary'}>
               {f}
             </ThemedText>
           </Pressable>
         ))}
       </View>
+
+      {/* Podium top 3 */}
+      {top3.length > 0 ? (
+        <View style={styles.podium}>
+          {PODIUM.map(({ slot, rank, bg, height }) => {
+            const e = top3[slot];
+            if (!e) return <View key={rank} style={styles.podiumSpacer} />;
+            return (
+              <Pressable
+                key={rank}
+                style={[styles.podiumCell, { backgroundColor: bg, height }]}
+                onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}>
+                <ThemedText type="subtitle">#{rank}</ThemedText>
+                <View style={styles.podiumBody}>
+                  <Avatar name={e.display_name} uri={e.avatar_url} size={40} />
+                  <ThemedText type="cardTitle" numberOfLines={1}>
+                    {e.display_name}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {e.elo}
+                  </ThemedText>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
     </>
   );
 
@@ -146,7 +165,7 @@ export default function RankingScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <FlatList
-          data={filtered}
+          data={restData}
           keyExtractor={(e) => e.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
@@ -154,9 +173,11 @@ export default function RankingScreen() {
           ListHeaderComponent={header}
           ItemSeparatorComponent={Separator}
           ListEmptyComponent={
-            <ThemedText type="default" themeColor="textSecondary">
-              {filter === 3 ? 'Aucun ami pour l’instant.' : 'Aucun joueur pour ce filtre.'}
-            </ThemedText>
+            filtered.length === 0 ? (
+              <ThemedText type="default" themeColor="textSecondary" style={styles.empty}>
+                {filter === 3 ? 'Aucun ami pour l’instant.' : 'Aucun joueur pour ce filtre.'}
+              </ThemedText>
+            ) : null
           }
         />
       </SafeAreaView>
@@ -169,31 +190,31 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
 
-  meCard: { backgroundColor: Palette.evergreen, borderRadius: Radius.md, padding: Spacing.four, marginTop: Spacing.three, gap: Spacing.two },
-  meTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  meElo: { fontSize: 44, lineHeight: 48 },
-  meRight: { alignItems: 'flex-end', gap: Spacing.half },
-  meDelta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  meLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.two },
 
   filters: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.four, marginBottom: Spacing.two },
-  pill: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center' },
-  pillActive: { backgroundColor: Palette.evergreen },
-  pillIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  pill: { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.pill, alignItems: 'center' },
+  pillActive: { backgroundColor: Palette.ink2 },
+  pillIdle: { backgroundColor: 'transparent' },
+
+  podium: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, marginTop: Spacing.three, marginBottom: Spacing.two },
+  podiumCell: { flex: 1, borderRadius: Radius.sm, padding: Spacing.three, justifyContent: 'space-between' },
+  podiumBody: { gap: Spacing.half, marginTop: Spacing.two },
+  podiumSpacer: { flex: 1 },
 
   separator: { height: Spacing.two },
+  empty: { marginTop: Spacing.three },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
     backgroundColor: Palette.white,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Palette.border,
     borderRadius: Radius.sm,
     paddingVertical: Spacing.three,
     paddingHorizontal: Spacing.three,
     overflow: 'hidden',
   },
-  rowMine: { backgroundColor: Palette.lime, borderColor: Palette.lime },
+  rowMine: { backgroundColor: Palette.lime },
   rank: { width: 22 },
   rowMain: { flex: 1 },
 });

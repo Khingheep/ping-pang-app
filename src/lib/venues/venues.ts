@@ -10,6 +10,7 @@ export type Venue = {
   indoor: boolean | null;
   lat: number | null;
   lng: number | null;
+  source?: string | null; // 'openstreetmap' = table publique ext. ; autre = club curaté/FFTT
 };
 
 export async function fetchVenues(): Promise<Venue[]> {
@@ -42,7 +43,7 @@ export async function fetchVenuesInBbox(
 ): Promise<Venue[]> {
   const { data } = await supabase
     .from('venues')
-    .select('id, name, address, indoor, lat, lng')
+    .select('id, name, address, indoor, lat, lng, source')
     .gte('lat', b.s)
     .lte('lat', b.n)
     .gte('lng', b.w)

@@ -21,12 +21,6 @@ const FORMATS: { k: SlotFormat; label: string }[] = [
   { k: '3sets', label: '3 sets gagnants' },
   { k: '2sets', label: '2 sets gagnants' },
 ];
-const LEVELS = [
-  { label: 'Tous niveaux', min: null as number | null, max: null as number | null },
-  { label: 'ELO 900–1200', min: 900, max: 1200 },
-  { label: 'ELO 1200+', min: 1200, max: null },
-  { label: 'ELO 1500+', min: 1500, max: null },
-];
 
 function dayLabel(offset: number): string {
   if (offset === 0) return "Aujourd'hui";
@@ -43,7 +37,6 @@ export default function NewSlotScreen() {
   const [hour, setHour] = useState(19);
   const [durationMin, setDuration] = useState(60);
   const [format, setFormat] = useState<SlotFormat>('3sets');
-  const [levelIdx, setLevelIdx] = useState(0);
   const [busy, setBusy] = useState(false);
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => i), []);
@@ -62,7 +55,6 @@ export default function NewSlotScreen() {
       return;
     }
     const end = new Date(start.getTime() + durationMin * 60000);
-    const lvl = LEVELS[levelIdx];
     try {
       setBusy(true);
       await createSlot({
@@ -71,8 +63,8 @@ export default function NewSlotScreen() {
         startsAt: start.toISOString(),
         endsAt: end.toISOString(),
         format,
-        levelMin: lvl.min,
-        levelMax: lvl.max,
+        levelMin: null, // « niveau recherché » retiré → on notifie tous les joueurs de la zone
+        levelMax: null,
       });
       notify('Créneau publié 🏓', 'Les joueurs de la zone ont été notifiés.');
       router.back();
@@ -87,7 +79,7 @@ export default function NewSlotScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Proposer un créneau</ThemedText>
@@ -134,15 +126,6 @@ export default function NewSlotScreen() {
           <View style={styles.rowWrap}>
             {FORMATS.map((f) => (
               <Pill key={f.k} active={format === f.k} label={f.label} onPress={() => setFormat(f.k)} />
-            ))}
-          </View>
-
-          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.lbl}>
-            NIVEAU RECHERCHÉ
-          </ThemedText>
-          <View style={styles.rowWrap}>
-            {LEVELS.map((l, i) => (
-              <Pill key={l.label} active={levelIdx === i} label={l.label} onPress={() => setLevelIdx(i)} />
             ))}
           </View>
         </ScrollView>
@@ -198,13 +181,13 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: Spacing.two, paddingRight: Spacing.four },
   rowWrap: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
   pill: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center' },
-  pillActive: { backgroundColor: Palette.evergreen },
+  pillActive: { backgroundColor: Palette.ink2 },
   pillIdle: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
   submit: {
     margin: Spacing.four,
     height: 56,
     borderRadius: Radius.sm,
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     alignItems: 'center',
     justifyContent: 'center',
   },

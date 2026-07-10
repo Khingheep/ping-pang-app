@@ -4,7 +4,7 @@
  * set_scores est stocké du point de vue de player_a → le joueur A est toujours la ligne du haut.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { formatFromBestOf } from '@/lib/matches/history-calc';
 import { likeMatch, unlikeMatch } from '@/lib/matches/social';
@@ -15,6 +15,7 @@ export type MatchFeedPlayer = { id: string; name: string; avatarUrl: string | nu
 
 export type MatchFeedItem = {
   id: string;
+  kind: 'app' | 'fftt'; // 'app' = match joué dans l'app (scoreboard + social) ; 'fftt' = officiel FFTT (V/D)
   playerA: MatchFeedPlayer;
   playerB: MatchFeedPlayer;
   setScores: string | null; // détail des manches, vu de player_a ("11-7,9-11,…")
@@ -26,6 +27,7 @@ export type MatchFeedItem = {
   likeCount: number;
   liked: boolean;
   commentCount: number;
+  opponentRank?: string | null; // FFTT uniquement : classement officiel de l'adversaire ("N26", "12"…)
 };
 
 type Row = {
@@ -52,6 +54,7 @@ function toPlayer(p: { id: string; display_name: string; avatar_url: string | nu
 function mapRow(r: Row, like: { count: number; liked: boolean }, commentCount: number): MatchFeedItem {
   return {
     id: r.id,
+    kind: 'app',
     playerA: toPlayer(r.a, r.player_a),
     playerB: toPlayer(r.b, r.player_b),
     setScores: r.set_scores,
@@ -66,8 +69,8 @@ function mapRow(r: Row, like: { count: number; liked: boolean }, commentCount: n
   };
 }
 
-/** Tous les matchs confirmés (les plus récents d'abord), avec compteurs sociaux. */
-export async function fetchMatchesFeed(myId: string | undefined, limit = 40): Promise<MatchFeedItem[]> {
+/** Matchs APP confirmés (les plus récents d'abord), avec compteurs sociaux. */
+async function fetchAppMatchesFeed(myId: string | undefined, limit = 40): Promise<MatchFeedItem[]> {
   const { data } = await supabase
     .from('matches')
     .select(SELECT)
@@ -99,6 +102,72 @@ export async function fetchMatchesFeed(myId: string | undefined, limit = 40): Pr
   );
 }
 
+type FfttRow = {
+  match_uid: string;
+  match_date: string | null;
+  victoire: boolean | null;
+  adversaire_nom: string;
+  adversaire_classement: string | null;
+  player_number_id: string;
+};
+
+/**
+ * Matchs OFFICIELS FFTT récents (table `fftt_matches`, lecture publique), rattachés à leur joueur
+ * app via `players.fftt_id`. Cartes légères (V/D, pas de sets ni de social). On ne remonte que les
+ * matchs de joueurs présents dans l'app.
+ */
+async function fetchFfttFeedMatches(limit: number): Promise<MatchFeedItem[]> {
+  // 1. Joueurs app ayant lié une licence FFTT (on ne remonte QUE leurs matchs).
+  type PRow = { id: string; display_name: string | null; avatar_url: string | null; fftt_id: string | null };
+  const { data: pl } = await supabase
+    .from('players')
+    .select('id, display_name, avatar_url, fftt_id')
+    .not('fftt_id', 'is', null);
+  const players = ((pl as PRow[] | null) ?? []).filter((p) => p.fftt_id);
+  if (!players.length) return [];
+  const byFftt = new Map(players.map((p) => [p.fftt_id as string, p]));
+
+  // 2. LEURS matchs officiels, les plus récents d'abord (filtre serveur sur les n° liés → pas de
+  //    fenêtre gaspillée par des licenciés absents de l'app).
+  const { data: fm } = await supabase
+    .from('fftt_matches')
+    .select('match_uid, match_date, victoire, adversaire_nom, adversaire_classement, player_number_id')
+    .in('player_number_id', [...byFftt.keys()])
+    .not('match_date', 'is', null)
+    .order('match_date', { ascending: false })
+    .limit(limit * 2);
+  const rows = (fm as FfttRow[] | null) ?? [];
+
+  const out: MatchFeedItem[] = [];
+  for (const r of rows) {
+    const p = byFftt.get(r.player_number_id);
+    if (!p || !r.match_date) continue;
+    out.push({
+      id: r.match_uid,
+      kind: 'fftt',
+      playerA: { id: p.id, name: p.display_name ?? 'Joueur', avatarUrl: p.avatar_url },
+      playerB: { id: '', name: r.adversaire_nom, avatarUrl: null },
+      setScores: null,
+      score: '',
+      winnerIsA: r.victoire ?? true,
+      ranked: true,
+      date: r.match_date,
+      format: 'FFTT',
+      likeCount: 0,
+      liked: false,
+      commentCount: 0,
+      opponentRank: r.adversaire_classement,
+    });
+  }
+  return out;
+}
+
+/** Feed global unifié : matchs app confirmés + matchs officiels FFTT, les plus récents d'abord. */
+export async function fetchMatchesFeed(myId: string | undefined, limit = 40): Promise<MatchFeedItem[]> {
+  const [app, fftt] = await Promise.all([fetchAppMatchesFeed(myId, limit), fetchFfttFeedMatches(limit)]);
+  return [...app, ...fftt].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')).slice(0, limit);
+}
+
 /** Un match du feed (pour l'écran détail). */
 export async function fetchMatchFeedItem(matchId: string, myId: string | undefined): Promise<MatchFeedItem | null> {
   const { data } = await supabase.from('matches').select(SELECT).eq('id', matchId).maybeSingle();
@@ -117,20 +186,24 @@ export async function fetchMatchFeedItem(matchId: string, myId: string | undefin
   );
 }
 
-/** Feed global des matchs confirmés (mis en cache). */
+/**
+ * Feed global des matchs (app + FFTT). `limit` grandit au scroll (feed infini) → il fait partie de
+ * la clé ; `keepPreviousData` garde la liste affichée pendant qu'on charge la tranche suivante.
+ */
 export function useMatchesFeed(myId: string | undefined, limit = 40) {
   return useQuery({
-    queryKey: qk.feed.matches(myId ?? 'anon'),
+    queryKey: [...qk.feed.matches(myId ?? 'anon'), limit],
     queryFn: () => fetchMatchesFeed(myId, limit),
     enabled: !!myId,
     staleTime: STALE.feed,
+    placeholderData: keepPreviousData,
   });
 }
 
 /** Like/unlike optimiste d'un match du feed : met à jour le cache, rollback en cas d'échec. */
 export function useToggleMatchLike(myId: string) {
   const qc = useQueryClient();
-  const key = qk.feed.matches(myId);
+  const key = qk.feed.matches(myId); // préfixe → matche toutes les tailles [.., limit]
   return useMutation({
     mutationFn: async (item: MatchFeedItem) => {
       const liked = !item.liked;
@@ -140,15 +213,15 @@ export function useToggleMatchLike(myId: string) {
     },
     onMutate: async (item) => {
       await qc.cancelQueries({ queryKey: key });
-      const prev = qc.getQueryData<MatchFeedItem[]>(key);
+      const prev = qc.getQueriesData<MatchFeedItem[]>({ queryKey: key });
       const liked = !item.liked;
-      qc.setQueryData<MatchFeedItem[]>(key, (old) =>
+      qc.setQueriesData<MatchFeedItem[]>({ queryKey: key }, (old) =>
         (old ?? []).map((m) => (m.id === item.id ? { ...m, liked, likeCount: m.likeCount + (liked ? 1 : -1) } : m)),
       );
       return { prev };
     },
     onError: (_e, _item, ctx) => {
-      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+      for (const [k, data] of ctx?.prev ?? []) qc.setQueryData(k, data);
     },
   });
 }

@@ -1,58 +1,63 @@
-import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { StyleSheet } from 'react-native';
 
-import { Fonts, Palette } from '@/constants/theme';
+import { Icon } from '@/components/icon';
+import { TabBar } from '@/components/tab-bar';
+import { Palette } from '@/constants/theme';
 
 // Structure design « Ping Pang Connect » : Défis · Ranking · Accueil(centre) · Map · Train
+// Icônes Material Symbols Rounded — contour au repos, rempli quand l'onglet est actif.
+// Barre custom (bouton central en dôme) → cf. components/tab-bar.tsx.
 export default function TabsLayout() {
   return (
     <Tabs
+      tabBar={(props) => <TabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: Palette.evergreen,
-        tabBarInactiveTintColor: Palette.grey,
-        tabBarStyle: {
-          backgroundColor: Palette.whitePP,
-          borderTopColor: Palette.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-        },
-        tabBarLabelStyle: { fontFamily: Fonts.bodySemibold, fontSize: 11 },
         sceneStyle: { backgroundColor: Palette.whitePP },
       }}>
       <Tabs.Screen
         name="jouer"
         options={{
           title: 'Défis',
-          tabBarIcon: ({ color, size }) => <Ionicons name="flash" color={color} size={size} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name="bolt" color={color} size={size} fill={focused} />
+          ),
         }}
       />
       <Tabs.Screen
         name="classement"
         options={{
           title: 'Ranking',
-          tabBarIcon: ({ color, size }) => <Ionicons name="trophy" color={color} size={size} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name="leaderboard" color={color} size={size} fill={focused} />
+          ),
         }}
       />
       <Tabs.Screen
         name="index"
         options={{
           title: 'Accueil',
-          tabBarIcon: ({ color, size }) => <Ionicons name="home" color={color} size={size} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name="home" color={color} size={size} fill={focused} />
+          ),
         }}
       />
       <Tabs.Screen
         name="carte"
         options={{
-          title: 'Parties',
-          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" color={color} size={size} />,
+          title: 'Map',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name="explore" color={color} size={size} fill={focused} />
+          ),
         }}
       />
       <Tabs.Screen
         name="train"
         options={{
           title: 'Train',
-          tabBarIcon: ({ color, size }) => <Ionicons name="barbell" color={color} size={size} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name="fitness_center" color={color} size={size} fill={focused} />
+          ),
         }}
       />
     </Tabs>

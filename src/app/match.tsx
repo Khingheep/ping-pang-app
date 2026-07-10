@@ -95,7 +95,7 @@ export default function MatchDetailScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Match</ThemedText>
@@ -105,7 +105,7 @@ export default function MatchDetailScreen() {
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={8}>
           {loading ? (
             <View style={styles.center}>
-              <ActivityIndicator color={Palette.evergreen} />
+              <ActivityIndicator color={Palette.onyx} />
             </View>
           ) : !item ? (
             <View style={styles.center}>
@@ -255,6 +255,6 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
-  sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: Palette.evergreen, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: Palette.onyx, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { backgroundColor: Palette.grey },
 });

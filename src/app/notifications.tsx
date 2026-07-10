@@ -64,7 +64,7 @@ export default function NotificationsScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">Notifications</ThemedText>
@@ -135,7 +135,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     padding: Spacing.three,
   },
-  unread: { borderColor: Palette.evergreen },
+  unread: { borderColor: Palette.onyx },
   pressed: { opacity: 0.6 },
   icon: { width: 36, height: 36, borderRadius: Radius.sm, backgroundColor: Palette.lime, alignItems: 'center', justifyContent: 'center' },
   main: { flex: 1 },

@@ -29,7 +29,7 @@ export function ActionTile({
       <Image source={image} style={styles.image} contentFit="cover" />
       {/* Fondu evergreen → transparent (gauche vers droite) pour lisibilité du texte */}
       <LinearGradient
-        colors={['rgba(9,44,37,0.98)', 'rgba(9,44,37,0.55)', 'rgba(9,44,37,0)']}
+        colors={['rgba(23,23,23,0.98)', 'rgba(23,23,23,0.55)', 'rgba(23,23,23,0)']}
         locations={[0, 0.55, 1]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
@@ -57,7 +57,7 @@ const styles = StyleSheet.create({
     minHeight: 132,
     borderRadius: Radius.md,
     overflow: 'hidden',
-    backgroundColor: Palette.evergreen,
+    backgroundColor: Palette.onyx,
     justifyContent: 'center',
   },
   image: { position: 'absolute', top: 0, bottom: 0, right: 0, width: '62%' },

@@ -33,7 +33,7 @@ type Props = {
 
 const BANNER_W = Dimensions.get('window').width - Spacing.four * 2; // cartes pleine largeur (padding liste)
 const BANNER_H = 132;
-const FALLBACK_GRADIENT = [Palette.evergreen, '#2E7D4F'] as const;
+const FALLBACK_GRADIENT = [Palette.onyx, '#2E7D4F'] as const;
 
 /** « Auj. 19h », « Dem. 20h », « sam. 18h ». */
 function chipTime(iso: string): string {
@@ -103,7 +103,7 @@ export const VenueCard = memo(function VenueCard({ name, address, indoor, lat, l
         {mosaic ? (
           <View style={styles.pin} pointerEvents="none">
             <Ionicons name="location" size={40} color={Palette.white} style={styles.pinHalo} />
-            <Ionicons name="location" size={34} color={Palette.evergreen} style={styles.pinFront} />
+            <Ionicons name="location" size={34} color={Palette.onyx} style={styles.pinFront} />
           </View>
         ) : null}
 
@@ -152,7 +152,7 @@ export const VenueCard = memo(function VenueCard({ name, address, indoor, lat, l
           </ScrollView>
         ) : (
           <View style={styles.proposeRow}>
-            <Ionicons name="add-circle-outline" size={16} color={Palette.evergreen} />
+            <Ionicons name="add-circle-outline" size={16} color={Palette.onyx} />
             <ThemedText type="smallBold" themeColor="brand">
               Aucun créneau - propose le premier
             </ThemedText>
@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: 4,
   },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Palette.evergreen },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Palette.onyx },
   body: { padding: Spacing.three, gap: Spacing.one },
   address: { marginTop: -2 },
   chipsRow: { marginTop: Spacing.two, marginHorizontal: -2 },
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   chipMore: { backgroundColor: Palette.whitePP, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  chipSep: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: Palette.evergreen, opacity: 0.3, marginHorizontal: 2 },
+  chipSep: { width: StyleSheet.hairlineWidth, height: 12, backgroundColor: Palette.onyx, opacity: 0.3, marginHorizontal: 2 },
   proposeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: Spacing.two },
   players: { marginTop: Spacing.one },
 });

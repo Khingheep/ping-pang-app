@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChallengeCard } from '@/components/chat-cards';
@@ -52,6 +52,15 @@ export default function ChatScreen() {
   const [gifOpen, setGifOpen] = useState(false);
   const [challengeOpen, setChallengeOpen] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  /** Ouvre la barre + : on ferme d'abord le clavier, sinon la feuille passe DERRIÈRE lui
+   *  (l'overlay est absolu en bas, hors KeyboardAvoidingView ; sur le web KAV est un no-op). */
+  function openAttach() {
+    inputRef.current?.blur(); // web : referme le clavier du navigateur mobile
+    Keyboard.dismiss(); // natif : referme le clavier iOS/Android
+    setAttachOpen(true);
+  }
 
   async function refreshStatuses(msgs: Message[]) {
     setStatuses(await fetchCardStatuses(msgs));
@@ -260,7 +269,7 @@ export default function ChatScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.flex}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
             <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
           </Pressable>
           <ThemedText type="cardTitle">{otherName}</ThemedText>
@@ -285,10 +294,11 @@ export default function ChatScreen() {
             </View>
           ) : (
             <View style={styles.inputRow}>
-              <Pressable style={styles.attachBtn} onPress={() => setAttachOpen(true)} disabled={uploading}>
-                <Ionicons name={uploading ? 'ellipsis-horizontal' : 'add'} size={24} color={Palette.evergreen} />
+              <Pressable style={styles.attachBtn} onPress={openAttach} disabled={uploading}>
+                <Ionicons name={uploading ? 'ellipsis-horizontal' : 'add'} size={24} color={Palette.onyx} />
               </Pressable>
               <TextInput
+                ref={inputRef}
                 style={styles.input}
                 placeholder="Message…"
                 placeholderTextColor={Palette.grey}
@@ -408,7 +418,7 @@ const styles = StyleSheet.create({
   left: { justifyContent: 'flex-start' },
   right: { justifyContent: 'flex-end' },
   bubble: { maxWidth: '78%', borderRadius: Radius.md, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
-  bubbleMine: { backgroundColor: Palette.evergreen, borderBottomRightRadius: Radius.xs },
+  bubbleMine: { backgroundColor: Palette.onyx, borderBottomRightRadius: Radius.xs },
   bubbleTheirs: { backgroundColor: Palette.white, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border, borderBottomLeftRadius: Radius.xs },
   media: { width: 200, height: 200, borderRadius: Radius.md, backgroundColor: Palette.white },
   ticks: { alignSelf: 'flex-end', marginTop: 2, marginBottom: -2 },
@@ -446,7 +456,7 @@ const styles = StyleSheet.create({
     fontFamily: 'OpenSauceOne-Regular',
     fontSize: 15,
   },
-  sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: Palette.evergreen, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: Palette.onyx, alignItems: 'center', justifyContent: 'center' },
   blockedBanner: {
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,

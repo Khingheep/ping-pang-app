@@ -42,16 +42,16 @@ export function mapHtml(): string {
 <style>
   html,body,#map{height:100%;margin:0;padding:0;background:${Palette.whitePP}}
   .leaflet-popup-content{font-family:-apple-system,system-ui,sans-serif;font-size:13px;margin:10px 12px}
-  .leaflet-popup-content b{color:${Palette.evergreen}}
+  .leaflet-popup-content b{color:${Palette.onyx}}
   .leaflet-control-attribution{font-size:9px;opacity:.5}
   .me-dot{width:16px;height:16px;border-radius:50%;background:${Palette.purple};border:3px solid #fff;box-shadow:0 0 0 5px ${Palette.purple}33}
   .slot-pin{min-width:24px;height:24px;padding:0 6px;border-radius:12px;background:${Palette.lime};color:${Palette.evergreen};
-    border:2px solid ${Palette.evergreen};font:700 12px/22px -apple-system,system-ui,sans-serif;text-align:center;
+    border:2px solid ${Palette.onyx};font:700 12px/22px -apple-system,system-ui,sans-serif;text-align:center;
     box-shadow:0 1px 4px rgba(0,0,0,.3)}
 </style></head><body><div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  var BLUE='${Palette.blue}', GREEN='${Palette.evergreen}', LIME='${Palette.lime}';
+  var BLUE='${Palette.blue}', GREEN='${Palette.onyx}', LIME='${Palette.lime}';
   var map = L.map('map',{zoomControl:false,attributionControl:true}).setView([${PARIS.lat},${PARIS.lng}],12);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{
     maxZoom:20, subdomains:'abcd', attribution:'© OpenStreetMap, © CARTO'

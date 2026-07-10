@@ -34,6 +34,7 @@ const MSG_COLS = 'id, sender, recipient, body, created_at, kind, payload, delive
 export type Conversation = {
   otherId: string;
   otherName: string;
+  otherAvatar: string | null;
   lastBody: string;
   lastAt: string;
   archived: boolean;
@@ -241,16 +242,19 @@ export async function fetchConversations(
     const archived = st?.archived ?? false;
     if (archived !== wantArchived) continue; // bonne section (active vs archivée)
     if (!map.has(other)) {
-      map.set(other, { otherId: other, otherName: '', lastBody: m.body, lastAt: m.created_at, archived });
+      map.set(other, { otherId: other, otherName: '', otherAvatar: null, lastBody: m.body, lastAt: m.created_at, archived });
     }
   }
 
   const ids = [...map.keys()];
   if (ids.length) {
-    const { data: ps } = await supabase.from('players').select('id, display_name').in('id', ids);
-    ((ps as { id: string; display_name: string }[] | null) ?? []).forEach((p) => {
+    const { data: ps } = await supabase.from('players').select('id, display_name, avatar_url').in('id', ids);
+    ((ps as { id: string; display_name: string; avatar_url: string | null }[] | null) ?? []).forEach((p) => {
       const c = map.get(p.id);
-      if (c) c.otherName = p.display_name;
+      if (c) {
+        c.otherName = p.display_name;
+        c.otherAvatar = p.avatar_url;
+      }
     });
   }
   return [...map.values()];

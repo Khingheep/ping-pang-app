@@ -32,6 +32,7 @@ export async function proposeMatch(p: {
 export type PendingMatch = {
   id: string;
   proposerName: string;
+  proposerAvatar: string | null;
   myScore: string; // vu de mon côté (je suis player_b)
   bestOf: number;
   isRanked: boolean;
@@ -46,14 +47,14 @@ type PendingRow = {
   is_ranked: boolean;
   feeling: string | null;
   created_at: string;
-  a: { display_name: string } | null;
+  a: { display_name: string; avatar_url: string | null } | null;
 };
 
 /** Matchs en attente de MA confirmation (je suis l'adversaire = player_b). */
 export async function fetchPendingToConfirm(userId: string): Promise<PendingMatch[]> {
   const { data } = await supabase
     .from('matches')
-    .select('id, score, best_of, is_ranked, feeling, created_at, a:player_a(display_name)')
+    .select('id, score, best_of, is_ranked, feeling, created_at, a:player_a(display_name, avatar_url)')
     .eq('status', 'pending')
     .eq('player_b', userId)
     .eq('confirmed_by_b', false)
@@ -65,6 +66,7 @@ export async function fetchPendingToConfirm(userId: string): Promise<PendingMatc
     return {
       id: r.id,
       proposerName: r.a?.display_name ?? 'Joueur',
+      proposerAvatar: r.a?.avatar_url ?? null,
       myScore: `${y}-${x}`,
       bestOf: r.best_of ?? 5,
       isRanked: r.is_ranked,
