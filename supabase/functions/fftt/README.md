@@ -1,125 +1,84 @@
 # Edge Function `fftt` — lookup joueurs FFTT
 
-Expose la recherche et la fiche détaillée d'un licencié FFTT à l'app Expo, en
-JSON propre. C'est la version serveur du scraper [`scripts/fftt/`](../../scripts/fftt/)
-(dont la logique de parsing est portée ici, validée en live).
+Expose à l'app Expo la **recherche**, la **fiche détaillée** (profil + matchs),
+l'**historique de classement** et les **adversaires communs** d'un licencié FFTT,
+en JSON propre.
 
-## Architecture (découplée)
+## Backend : API PingPocket (sans CAPTCHA)
 
-L'app mobile ne peut pas scraper du HTML, et `www2.fftt.com` est protégé par un
-CAPTCHA. On sépare donc en deux :
+La fonction interroge l'**API JSON publique de PingPocket**
+(`https://www.pingpocket.fr/app/fftt/api/…`) — cf. [`pingpocket.ts`](./pingpocket.ts).
+C'est une API **stateless** : **aucun cookie, aucun CAPTCHA, aucun `PHPSESSID`** à
+entretenir. Solution **temporaire en attendant l'accès officiel SMARTPING**.
 
 ```text
-┌─────────────┐   invoke('fftt')   ┌──────────────────┐   PHPSESSID    ┌────────────┐
-│  App Expo   │ ─────────────────▶ │  Edge Function   │ ◀───lecture─── │ fftt_session│
-│ (Supabase   │ ◀──── JSON ─────── │  fftt (Deno)     │                │  (Postgres) │
-│  client)    │                    │  fetch + cheerio │ ───écriture──▶ │ fftt_cache  │
-└─────────────┘                    └────────┬─────────┘                └─────▲──────┘
-                                            │ HTTP (avec PHPSESSID)          │ upsert
-                                            ▼                                │
-                                   ┌──────────────────┐            ┌─────────┴────────┐
-                                   │   www2.fftt.com  │            │  Script Node     │
-                                   │  (API officielle)│            │ refresh-session  │
-                                   └──────────────────┘            │ (OCR du CAPTCHA) │
-                                                                   └──────────────────┘
+┌─────────────┐  invoke('fftt')  ┌──────────────────┐   GET JSON    ┌──────────────────────────┐
+│  App Expo   │ ───────────────▶ │  Edge Function   │ ────────────▶ │ pingpocket.fr            │
+│ (client SB) │ ◀──── JSON ───── │  fftt (Deno)     │ ◀─── JSON ─── │ /app/fftt/api/licensees  │
+└─────────────┘                  └───────┬──────────┘               └──────────────────────────┘
+                                         │ upsert (cache + miroir)
+                                         ▼
+                            ┌──────────────────────────────────┐
+                            │ fftt_cache · fftt_players ·        │
+                            │ fftt_matches (idempotent match_uid)│
+                            └──────────────────────────────────┘
 ```
 
-- **Edge Function** (Deno, légère) : lit le `PHPSESSID` validé en base, interroge
-  FFTT, parse, met en cache, renvoie du JSON. **Pas d'OCR** (cold start rapide, fiable).
-- **Script Node `refresh-session`** : résout le CAPTCHA (tesseract) et **upload** le
-  `PHPSESSID` validé dans `fftt_session`. Tourne en cron (ex. GitHub Actions).
-- Si la session est morte (CAPTCHA réapparu), l'Edge Function renvoie **503
-  `session_expired`** → relancer un refresh.
+- **Même contrat de types** que l'ancien scraper (`FfttPlayer` / `FfttPlayerDetail`
+  dans [`fftt.ts`](./fftt.ts)) → **drop-in**, l'app est inchangée.
+- **Persistance** : `action=player` upsert le profil dans `fftt_players` et les matchs
+  dans `fftt_matches` (clé naturelle idempotente `match_uid`, cf. migration `0020`) →
+  c'est ce miroir que lit le feed / le profil, sans re-scraper.
+- **Rate limit** : PingPocket répond `429` si on tape trop vite (l'IP sortante est
+  partagée par tous les users). `pingpocket.ts` retry/backoff (700 ms, 1.5 s), puis la
+  fonction renvoie **503 `rate_limited`** → l'appelant s'appuie sur le cache.
 
-> Pourquoi ce découpage : l'OCR (tesseract.js / WASM) est lourd et peu fiable en
-> Deno Deploy. On le garde côté Node où il marche, et la session validée (rare à
-> renouveler) est partagée via la base.
+> **Legacy** : l'ancien scraper `www2.fftt.com` (CAPTCHA 4 chiffres + `PHPSESSID` +
+> OCR tesseract) reste dans [`fftt.ts`](./fftt.ts) comme **repli**. Pour y revenir,
+> réimporter `searchFftt` / `getDetailFftt` depuis `./fftt.ts` dans `index.ts`. Tant
+> que PingPocket est actif, la table `fftt_session` et le script `refresh-session`
+> (`scripts/fftt/`) sont **dormants**.
 
-## Tables (migration `0003_fftt_session.sql`)
+## Tables
 
 | Table | Rôle |
 |---|---|
-| `fftt_session` | Singleton (`id=1`) : le `PHPSESSID` validé + `expires_at`. |
 | `fftt_cache` | Cache des réponses (`cache_key` → `payload` jsonb), TTL appliqué côté fonction. |
+| `fftt_players` / `fftt_matches` | Miroir persistant (upsert idempotent) alimenté à chaque `action=player`. |
+| `fftt_session` | **Dormant** — utile uniquement pour le repli www2.fftt.com. |
 
-Les deux ont la **RLS activée sans policy** → accessibles uniquement par la
-`service_role` (l'Edge Function). Aucune exposition publique.
+RLS activée sans policy (accès `service_role` uniquement) pour `fftt_cache`/`fftt_session` ;
+`fftt_players`/`fftt_matches` sont en lecture publique (miroir affiché dans l'app).
 
 ## Endpoints
 
-`GET` (query string) **ou** `POST` (corps JSON) — les deux marchent, donc
-compatible avec `supabase.functions.invoke`.
+`GET` (query string) **ou** `POST` (corps JSON) — compatible `supabase.functions.invoke`.
 
-### `action=search`
-
-| Param | Ex. | Défaut |
+| Action | Params clés | Réponse |
 |---|---|---|
-| `nom` / `prenom` | `LEBRUN` / `Felix` | |
-| `licence` | `3421810` | |
-| `club` / `nclub` | `MONTPELLIER TT` | |
-| `sexe` | `Hommes` \| `Femmes` | les deux (fusionnés) |
-| `type` | `cl` (tous) \| `off` (numérotés nat.) | `cl` |
-| `limit` | `50` | `100` |
+| `search` | `nom`/`prenom` **ou** `licence`, `limit` | `{ players: FfttPlayer[], cached? }` |
+| `player` | `numberId` (= n° de licence) | `{ player: FfttPlayerDetail, cached? }` |
+| `history` | `numberId` | `{ history: { date, points, nationalRanking }[] }` — tendance long terme |
+| `common` | 2 licences | adversaires communs entre 2 joueurs (head-to-head) |
 
-→ `{ "players": FfttPlayer[], "cached"?: true }`
+Formats `FfttPlayer` / `FfttPlayerDetail` : voir [`fftt.ts`](./fftt.ts). Les 4 actions
+sont servies par PingPocket (JSON, sans CAPTCHA).
 
-### `action=player`
+## Cache & TTL
 
-| Param | Ex. |
-|---|---|
-| `numberId` | `3421810` (= n° de licence) |
-
-→ `{ "player": FfttPlayerDetail, "cached"?: true }`
-
-Formats `FfttPlayer` / `FfttPlayerDetail` : voir [`fftt.ts`](./fftt.ts) et le
-[README du scraper](../../scripts/fftt/README.md).
+Réponses mises en cache dans `fftt_cache` : `search` **1 h**, `player` **6 h**,
+`history` **24 h**, `common` **6 h** (constantes `TTL` dans [`index.ts`](./index.ts)).
+Un hit renvoie `"cached": true`.
 
 ## Déploiement
 
 ```bash
-# 1) Appliquer la migration (tables session + cache)
-supabase db push
-
-# 2) Déployer la fonction
 supabase functions deploy fftt
 ```
 
-`SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` sont **injectés automatiquement**
-dans les Edge Functions — rien à configurer côté fonction.
-
-## Alimenter / renouveler la session
-
-La fonction est inerte tant que `fftt_session` est vide. Depuis le scraper Node :
-
-```bash
-cd scripts/fftt
-cp .env.example .env          # renseigner SUPABASE_URL + SERVICE_ROLE_KEY
-npm install
-npm run fftt -- refresh-session
-```
-
-Ça résout le CAPTCHA et upload le `PHPSESSID` validé. À **automatiser en cron**
-(la session FFTT expire après quelques heures). Exemple GitHub Actions :
-
-```yaml
-# .github/workflows/fftt-session.yml
-name: Refresh FFTT session
-on:
-  schedule: [{ cron: '0 */4 * * *' }]   # toutes les 4 h
-  workflow_dispatch:
-jobs:
-  refresh:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - working-directory: ping-pang-app/scripts/fftt
-        run: npm ci && npm run fftt -- refresh-session
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-```
+`SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` sont **injectés automatiquement** dans les
+Edge Functions. **Aucune session à alimenter** (PingPocket est stateless) — plus de cron
+`refresh-session` tant qu'on reste sur PingPocket.
 
 ## Appel depuis l'app Expo
 
@@ -128,40 +87,35 @@ import { supabase } from '@/lib/supabase/client';
 
 // Recherche (onboarding « trouve ton classement »)
 const { data } = await supabase.functions.invoke('fftt', {
-  body: { action: 'search', nom: 'LEBRUN', prenom: 'Felix' },
+  body: { action: 'search', nom: 'GHEERAERT', prenom: 'Paul' },
 });
-// data.players → [{ numberId, pointsOfficiels, classementOfficiel, club, … }]
+// data.players → [{ numberId, pointsOfficiels, club, … }]
 
-// Fiche détaillée (dashboard progression)
+// Fiche détaillée (profil + matchs → alimente fftt_matches)
 const { data: d } = await supabase.functions.invoke('fftt', {
-  body: { action: 'player', numberId: '3421810' },
+  body: { action: 'player', numberId: '7519477' },
 });
-// d.player.matchs → historique pour les graphes
+// d.player.matchs → historique
 ```
 
-Gérer le cas **503 `session_expired`** : afficher un retry / déclencher un refresh.
+Gérer le cas **503 `rate_limited`** (PingPocket throttle) : afficher les données en
+cache et réessayer plus tard — surtout **ne pas marteler**.
 
 ### curl (debug)
 
 ```bash
-curl "https://YOUR-PROJECT.supabase.co/functions/v1/fftt?action=search&nom=LEBRUN" \
+curl "https://YOUR-PROJECT.supabase.co/functions/v1/fftt?action=search&nom=GHEERAERT" \
   -H "Authorization: Bearer YOUR-ANON-KEY"
 
-curl "https://YOUR-PROJECT.supabase.co/functions/v1/fftt?action=player&numberId=3421810" \
+curl "https://YOUR-PROJECT.supabase.co/functions/v1/fftt?action=player&numberId=7519477" \
   -H "Authorization: Bearer YOUR-ANON-KEY"
 ```
 
-## Cache & TTL
-
-Réponses mises en cache dans `fftt_cache` : `search` 1 h, `player` 6 h (constantes
-dans [`index.ts`](./index.ts)). Un hit renvoie `"cached": true`.
-
 ## Limites
 
-- **Non testée localement** (pas de Deno/Supabase CLI dans l'env de dev) : la
-  logique FFTT est un **port direct** du scraper Node validé en live ; à fumer-tester
-  après le 1er `supabase functions deploy`.
-- Dépend du HTML de `www2.fftt.com` (parsing dans `fftt.ts`).
-- La session expire → cron de refresh indispensable en prod.
-- `pointsMensuels`/évolutions buggés côté FFTT pour le top ~100 numéroté national
-  (`pointsOfficiels` reste fiable).
+- Dépend de **PingPocket** (API non officielle, non contractuelle) → **temporaire, à
+  migrer vers SMARTPING** (l'API officielle FFTT) dès l'accès obtenu.
+- **Rate limit 429 partagé par IP** (tous les users passent par l'IP de l'Edge Function)
+  → le cache `fftt_cache` est indispensable ; ne pas synchroniser en rafale.
+- L'API JSON n'expose **pas** la lettre de classement ni le rang national de l'adversaire
+  (seulement les points) → ces champs restent `null`.

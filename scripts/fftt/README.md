@@ -1,5 +1,12 @@
 # Scraper FFTT — lookup joueurs (mission 01)
 
+> ⚠️ **LEGACY / repli.** Ce scraper `www2.fftt.com` (CAPTCHA 4 chiffres + `PHPSESSID`
+> + OCR tesseract) **n'est plus le chemin actif.** L'Edge Function `fftt` interroge
+> désormais l'**API JSON PingPocket** (stateless, **sans CAPTCHA**) — cf.
+> [`supabase/functions/fftt/README.md`](../../supabase/functions/fftt/README.md) et
+> `pingpocket.ts`. Objectif à terme : l'**API officielle SMARTPING**. On garde ce
+> code + la tâche `refresh-session` comme **repli** si PingPocket tombe.
+
 Recherche de licenciés FFTT par **nom / prénom / licence / club**, avec leur
 classement officiel. Source : l'API AJAX du site officiel `www2.fftt.com`
 (la même que l'app mobile FFTT). Renvoie du JSON propre et typé.
