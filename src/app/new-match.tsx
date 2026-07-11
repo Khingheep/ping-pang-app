@@ -8,7 +8,7 @@ import { Avatar } from '@/components/avatar';
 import { SetScoreEntry, type SetInput } from '@/components/set-score-entry';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
-import { proposeMatch } from '@/lib/matches/confirm';
+import { proposeMatch, reproposeMatch } from '@/lib/matches/confirm';
 import { countSets, formatSetScores, validateMatch, type SetScore } from '@/lib/matches/sets';
 import { bestOfForFormat, closeChallenge, type ChallengeFormat } from '@/lib/social/challenges';
 import { notify } from '@/lib/ui/alert';
@@ -29,12 +29,13 @@ function numericSets(sets: SetInput[]): SetScore[] {
 }
 
 export default function NewMatchScreen() {
-  const { opponentId, opponentName, opponentAvatar, challengeId, format } = useLocalSearchParams<{
+  const { opponentId, opponentName, opponentAvatar, challengeId, format, disputeMatchId } = useLocalSearchParams<{
     opponentId?: string;
     opponentName?: string;
     opponentAvatar?: string;
     challengeId?: string;
     format?: string;
+    disputeMatchId?: string; // si présent : on corrige un match contesté (repropose_match)
   }>();
   // Depuis un défi : le format a été convenu à l'envoi → on le verrouille (pas de changement possible).
   const lockedFmt = format === 'bo3' || format === 'bo5' || format === 'bo7' ? (format as ChallengeFormat) : null;
@@ -61,22 +62,28 @@ export default function NewMatchScreen() {
     try {
       setBusy(true);
       const setScores = formatSetScores(numericSets(sets));
-      const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling, setScores: setScores || null });
-      // Si on saisit depuis un défi accepté (section « À jouer ») : on le clôture (statut → played),
-      // best-effort → un échec de clôture ne doit pas masquer le succès de la proposition de match.
-      if (challengeId) {
-        try {
-          await closeChallenge(challengeId, r.match_id);
-        } catch {
-          /* le défi reste « à jouer » ; sans conséquence sur le match proposé */
+      if (disputeMatchId) {
+        // Correction d'un match CONTESTÉ : on réutilise l'enregistrement (repropose_match) →
+        // il repasse « à confirmer » chez l'adversaire, pas de doublon.
+        await reproposeMatch({ matchId: disputeMatchId, mySets, oppSets, setScores: setScores || null });
+        notify('Score corrigé 📨', `En attente de la confirmation de ${opponentName ?? 'ton adversaire'}.`);
+      } else {
+        const r = await proposeMatch({ opponentId, mySets, oppSets, bestOf, feeling, setScores: setScores || null });
+        // Depuis un défi accepté (section « À jouer ») : on le clôture (statut → played), best-effort.
+        if (challengeId) {
+          try {
+            await closeChallenge(challengeId, r.match_id);
+          } catch {
+            /* le défi reste « à jouer » ; sans conséquence sur le match proposé */
+          }
         }
+        const sign = r.preview_delta > 0 ? '+' : '';
+        notify(
+          'Match envoyé 📨',
+          `En attente de la confirmation de ${opponentName ?? 'ton adversaire'}.\n` +
+            `Une fois validé : ${sign}${r.preview_delta} ELO (estimation).`,
+        );
       }
-      const sign = r.preview_delta > 0 ? '+' : '';
-      notify(
-        'Match envoyé 📨',
-        `En attente de la confirmation de ${opponentName ?? 'ton adversaire'}.\n` +
-          `Une fois validé : ${sign}${r.preview_delta} ELO (estimation).`,
-      );
       router.back();
     } catch (e) {
       notify('Erreur', e instanceof Error ? e.message : 'Réessaie plus tard.');

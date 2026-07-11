@@ -20,7 +20,13 @@ import { MatchScoreboard } from '@/components/match-scoreboard';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { useConfirmMatch, useDisputeMatch, usePendingToConfirm, type PendingMatch } from '@/lib/matches/confirm';
+import {
+  useConfirmMatch,
+  useDisputedToResolve,
+  useDisputeMatch,
+  usePendingToConfirm,
+  type PendingMatch,
+} from '@/lib/matches/confirm';
 import { useMatchesFeed, useToggleMatchLike, type MatchFeedItem } from '@/lib/matches/feed';
 import { useMyProfile } from '@/lib/players/profile';
 import { useRefreshOnFocus } from '@/lib/query/use-refresh-on-focus';
@@ -207,6 +213,7 @@ export default function FeedScreen() {
   const sessionsQ = useSessionsFeed(myId, limit);
   const matchesQ = useMatchesFeed(myId, limit);
   const pendingQ = usePendingToConfirm(myId);
+  const disputedQ = useDisputedToResolve(myId);
   const unreadQ = useUnreadCount();
   const unreadMsgQ = useUnreadMessages(myId);
 
@@ -222,6 +229,7 @@ export default function FeedScreen() {
   useRefreshOnFocus(sessionsQ.refetch);
   useRefreshOnFocus(matchesQ.refetch);
   useRefreshOnFocus(pendingQ.refetch);
+  useRefreshOnFocus(disputedQ.refetch);
   useRefreshOnFocus(unreadQ.refetch);
   useRefreshOnFocus(unreadMsgQ.refetch);
 
@@ -229,6 +237,7 @@ export default function FeedScreen() {
   const sessions = useMemo(() => sessionsQ.data ?? [], [sessionsQ.data]);
   const matches = matchesQ.data ?? [];
   const pending = pendingQ.data ?? [];
+  const disputed = disputedQ.data ?? [];
   const unread = unreadQ.data ?? 0;
   const unreadMsg = unreadMsgQ.data ?? 0;
 
@@ -351,6 +360,46 @@ export default function FeedScreen() {
                     )}
                   </Pressable>
                 </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {/* Contesté — re-proposer le bon score */}
+        {disputed.length > 0 ? (
+          <View style={styles.pendingBlock}>
+            <ThemedText type="sectionTitle" themeColor="textSecondary">
+              Contesté
+            </ThemedText>
+            {disputed.map((m) => (
+              <View key={m.id} style={[styles.confirmCard, styles.disputedCard]}>
+                <View style={styles.confirmTop}>
+                  <Avatar name={m.opponentName} uri={m.opponentAvatar} size={40} color={Palette.red} />
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="cardTitle">Score contesté · {m.opponentName}</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Bo{m.bestOf} · score proposé {m.myScore} · re-propose le bon
+                    </ThemedText>
+                  </View>
+                </View>
+                <Pressable
+                  style={[styles.cBtn, styles.cConfirm]}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/new-match',
+                      params: {
+                        opponentId: m.opponentId,
+                        opponentName: m.opponentName,
+                        opponentAvatar: m.opponentAvatar ?? '',
+                        format: `bo${m.bestOf}`, // format d'origine → figé (on ne change pas le format en corrigeant)
+                        disputeMatchId: m.id, // réutilise le match contesté au lieu d'en créer un doublon
+                      },
+                    })
+                  }>
+                  <ThemedText type="smallBold" themeColor="onBrand">
+                    Proposer le bon score
+                  </ThemedText>
+                </Pressable>
               </View>
             ))}
           </View>
@@ -492,6 +541,7 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     gap: Spacing.three,
   },
+  disputedCard: { borderColor: Palette.red },
   confirmTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   confirmActions: { flexDirection: 'row', gap: Spacing.two },
   cBtn: { flex: 1, height: 44, borderRadius: Radius.xs, alignItems: 'center', justifyContent: 'center' },
