@@ -1,12 +1,14 @@
 /**
- * Provisionne le compte e2e (idempotent) avant les tests Playwright.
+ * Provisionne les comptes e2e (idempotent) avant les tests Playwright.
  *
  *   node e2e/provision.mjs
  *
  * Lit la service_role + l'URL Supabase depuis scripts/fftt/.env (jamais commité).
- * Cree/confirme un compte auth dedie aux tests + une ligne players ONBOARDEE, avec un
- * objectif hebdo remis à null (baseline 3h) pour que le test d'objectif parte propre.
- * N'affecte QUE ce compte de test, aucun vrai utilisateur.
+ * Cree/confirme deux comptes auth dedies aux tests + leurs lignes players ONBOARDEES :
+ *   - e2e-runner : le compte pilote (celui qui se connecte dans les tests)
+ *   - e2e-peer   : un pair (destinataire des messages, futur adversaire de match)
+ * Puis remet le compte pilote a plat (objectif=null, seances/creneaux/tournois/messages vides)
+ * pour que chaque run parte d'une ardoise propre. N'affecte QUE ces comptes de test.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -14,9 +16,10 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ── Identifiants du compte e2e (doivent matcher e2e/creds.ts) ──
+// ── Identifiants des comptes e2e (doivent matcher e2e/creds.ts) ──
 export const E2E_EMAIL = 'e2e-runner@pingpang.test';
 export const E2E_PASSWORD = 'E2eRunner!2026';
+const PEER_EMAIL = 'e2e-peer@pingpang.test';
 
 // ── Charge scripts/fftt/.env (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY) ──
 function loadEnv(path) {
@@ -43,67 +46,60 @@ if (!BASE || !SVC) {
 
 const h = { apikey: SVC, Authorization: `Bearer ${SVC}`, 'Content-Type': 'application/json' };
 
-async function ensureUser() {
-  // Crée le compte (email confirmé + mot de passe connu). S'il existe déjà, on le retrouve
-  // et on (re)met le mot de passe pour garantir un login déterministe.
+/** Cree (ou retrouve) un compte auth confirme avec mot de passe connu. Renvoie son id. */
+async function ensureUser(email, displayName) {
   const create = await fetch(`${BASE}/auth/v1/admin/users`, {
     method: 'POST',
     headers: h,
-    body: JSON.stringify({
-      email: E2E_EMAIL,
-      password: E2E_PASSWORD,
-      email_confirm: true,
-      user_metadata: { display_name: 'E2E Runner' },
-    }),
+    body: JSON.stringify({ email, password: E2E_PASSWORD, email_confirm: true, user_metadata: { display_name: displayName } }),
   });
   if (create.ok) return (await create.json()).id;
 
   const list = await fetch(`${BASE}/auth/v1/admin/users?per_page=500`, { headers: h }).then((r) => r.json());
-  const u = (list.users || []).find((x) => (x.email ?? '').toLowerCase() === E2E_EMAIL.toLowerCase());
-  if (!u) throw new Error('Compte e2e introuvable et non créé.');
-  const upd = await fetch(`${BASE}/auth/v1/admin/users/${u.id}`, {
+  const u = (list.users || []).find((x) => (x.email ?? '').toLowerCase() === email.toLowerCase());
+  if (!u) throw new Error(`Compte e2e introuvable et non cree : ${email}`);
+  await fetch(`${BASE}/auth/v1/admin/users/${u.id}`, {
     method: 'PUT',
     headers: h,
     body: JSON.stringify({ password: E2E_PASSWORD, email_confirm: true }),
   });
-  if (!upd.ok) throw new Error(`MAJ mot de passe échouée: ${upd.status} ${await upd.text()}`);
   return u.id;
 }
 
-const id = await ensureUser();
-
-// Ligne players ONBOARDÉE (sinon le RootNavigator redirige vers /onboarding), objectif hebdo
-// remis à null → le hero affiche le défaut 3h, baseline propre pour le test.
-const up = await fetch(`${BASE}/rest/v1/players`, {
-  method: 'POST',
-  headers: { ...h, Prefer: 'resolution=merge-duplicates,return=representation' },
-  body: JSON.stringify([
-    {
-      id,
-      handle: 'e2e-runner',
-      display_name: 'E2E Runner',
-      city: 'Paris',
-      elo: 1420,
-      level: 'confirme',
-      lat: 48.8566,
-      lng: 2.3522,
-      onboarded: true,
-      weekly_goal_min: null,
-    },
-  ]),
-});
-const body = await up.json();
-if (!up.ok) {
-  console.error('✗ upsert players', up.status, JSON.stringify(body).slice(0, 300));
-  process.exit(1);
+/** Upsert d'une ligne players ONBOARDEE (sinon le RootNavigator renvoie vers /onboarding). */
+async function ensurePlayer(row) {
+  const up = await fetch(`${BASE}/rest/v1/players`, {
+    method: 'POST',
+    headers: { ...h, Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([row]),
+  });
+  if (!up.ok) throw new Error(`upsert players ${row.handle}: ${up.status} ${await up.text()}`);
 }
 
-// Etat propre : on efface les seances d'entrainement du compte de test (les tests en
-// creent/seedent puis nettoient, mais on repart d'une ardoise vide a chaque run).
-const del = await fetch(`${BASE}/rest/v1/training_sessions?player_id=eq.${id}`, {
-  method: 'DELETE',
-  headers: { ...h, Prefer: 'return=minimal' },
-});
-if (!del.ok) console.warn('⚠ nettoyage training_sessions', del.status, await del.text());
+const del = (path) => fetch(`${BASE}/rest/v1/${path}`, { method: 'DELETE', headers: { ...h, Prefer: 'return=minimal' } });
 
-console.log(`✓ compte e2e prêt: ${E2E_EMAIL} (id ${id}) — onboardé, objectif=null (3h), séances vidées`);
+// ── Comptes ──
+const runnerId = await ensureUser(E2E_EMAIL, 'E2E Runner');
+const peerId = await ensureUser(PEER_EMAIL, 'E2E Peer');
+
+await ensurePlayer({
+  id: runnerId, handle: 'e2e-runner', display_name: 'E2E Runner', city: 'Paris',
+  elo: 1420, level: 'confirme', lat: 48.8566, lng: 2.3522, onboarded: true, weekly_goal_min: null,
+});
+await ensurePlayer({
+  id: peerId, handle: 'e2e-peer', display_name: 'E2E Peer', city: 'Paris',
+  elo: 1380, level: 'confirme', lat: 48.86, lng: 2.35, onboarded: true,
+});
+
+// ── Ardoise propre pour le compte pilote (les tests seedent/creent puis nettoient, mais on
+//    repart de zero a chaque run). Ordre : enfants avant parents pour les tournois. ──
+const tRows = await fetch(`${BASE}/rest/v1/tournaments?owner_id=eq.${runnerId}&select=id`, { headers: h }).then((r) => r.json());
+for (const t of Array.isArray(tRows) ? tRows : []) await del(`tournament_players?tournament_id=eq.${t.id}`);
+await del(`tournament_players?player_id=eq.${runnerId}`);
+await del(`tournaments?owner_id=eq.${runnerId}`);
+await del(`training_sessions?player_id=eq.${runnerId}`);
+await del(`slots?host_id=eq.${runnerId}`);
+await del(`messages?sender=eq.${runnerId}`);
+await del(`messages?recipient=eq.${runnerId}`);
+
+console.log(`✓ comptes e2e prets: ${E2E_EMAIL} (${runnerId}) + ${PEER_EMAIL} (${peerId}) — onboardes, etat pilote remis a plat`);

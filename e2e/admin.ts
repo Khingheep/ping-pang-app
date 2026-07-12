@@ -6,8 +6,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { E2E_EMAIL } from './creds';
-
 function loadEnv(path: string): Record<string, string> {
   const out: Record<string, string> = {};
   try {
@@ -32,16 +30,42 @@ if (!BASE || !SVC) throw new Error('admin e2e: URL Supabase ou service_role manq
 
 const H = { apikey: SVC, Authorization: `Bearer ${SVC}`, 'Content-Type': 'application/json' };
 
-let cachedId: string | null = null;
+const cache: Record<string, string> = {};
 
-/** Id du joueur de test (retrouve par handle, mis en cache). */
-export async function playerId(): Promise<string> {
-  if (cachedId) return cachedId;
-  const r = await fetch(`${BASE}/rest/v1/players?handle=eq.e2e-runner&select=id`, { headers: H });
+/** Id d'un joueur de test retrouve par handle (mis en cache). */
+async function idByHandle(handle: string): Promise<string> {
+  if (cache[handle]) return cache[handle];
+  const r = await fetch(`${BASE}/rest/v1/players?handle=eq.${handle}&select=id`, { headers: H });
   const rows = (await r.json()) as { id: string }[];
-  if (!rows?.length) throw new Error(`admin e2e: joueur introuvable (${E2E_EMAIL})`);
-  cachedId = rows[0].id;
-  return cachedId;
+  if (!rows?.length) throw new Error(`admin e2e: joueur introuvable (${handle})`);
+  cache[handle] = rows[0].id;
+  return rows[0].id;
+}
+
+/** Id du compte pilote. */
+export const playerId = () => idByHandle('e2e-runner');
+/** Id du compte pair (destinataire de messages, adversaire de match). */
+export const peerId = () => idByHandle('e2e-peer');
+
+/** Id d'un lieu quelconque (pour proposer un creneau). */
+export async function anyVenueId(): Promise<string> {
+  if (cache.venue) return cache.venue;
+  const r = await fetch(`${BASE}/rest/v1/venues?select=id&limit=1`, { headers: H });
+  const rows = (await r.json()) as { id: string }[];
+  if (!rows?.length) throw new Error('admin e2e: aucun lieu en base');
+  cache.venue = rows[0].id;
+  return rows[0].id;
+}
+
+async function count(path: string): Promise<number> {
+  const r = await fetch(`${BASE}/rest/v1/${path}`, { headers: H });
+  const rows = (await r.json()) as unknown[];
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+async function del(path: string): Promise<void> {
+  const r = await fetch(`${BASE}/rest/v1/${path}`, { method: 'DELETE', headers: { ...H, Prefer: 'return=minimal' } });
+  if (!r.ok) throw new Error(`admin del ${path}: ${r.status} ${await r.text()}`);
 }
 
 /** Fixe l'objectif hebdo (minutes) ou null (defaut). */
@@ -59,12 +83,38 @@ export const resetGoal = () => setGoal(null);
 
 /** Supprime toutes les seances d'entrainement du compte de test. */
 export async function deleteSessions(): Promise<void> {
+  await del(`training_sessions?player_id=eq.${await playerId()}`);
+}
+
+/** Supprime tous les creneaux proposes par le compte de test. */
+export async function deleteSlots(): Promise<void> {
+  await del(`slots?host_id=eq.${await playerId()}`);
+}
+
+/** Nombre de creneaux proposes par le compte de test. */
+export async function countSlots(): Promise<number> {
+  return count(`slots?host_id=eq.${await playerId()}&select=id`);
+}
+
+/** Supprime les tournois crees par le compte de test (+ inscriptions). */
+export async function deleteTournaments(): Promise<void> {
   const id = await playerId();
-  const r = await fetch(`${BASE}/rest/v1/training_sessions?player_id=eq.${id}`, {
-    method: 'DELETE',
-    headers: { ...H, Prefer: 'return=minimal' },
-  });
-  if (!r.ok) throw new Error(`deleteSessions: ${r.status} ${await r.text()}`);
+  const rows = (await (await fetch(`${BASE}/rest/v1/tournaments?owner_id=eq.${id}&select=id`, { headers: H })).json()) as { id: string }[];
+  for (const t of Array.isArray(rows) ? rows : []) await del(`tournament_players?tournament_id=eq.${t.id}`);
+  await del(`tournament_players?player_id=eq.${id}`);
+  await del(`tournaments?owner_id=eq.${id}`);
+}
+
+/** Nombre de tournois crees par le compte de test. */
+export async function countTournaments(): Promise<number> {
+  return count(`tournaments?owner_id=eq.${await playerId()}&select=id`);
+}
+
+/** Supprime les messages envoyes/recus par le compte de test. */
+export async function deleteMessages(): Promise<void> {
+  const id = await playerId();
+  await del(`messages?sender=eq.${id}`);
+  await del(`messages?recipient=eq.${id}`);
 }
 
 /** Seed une seance (par defaut : cette semaine, via created_at=now cote serveur). */

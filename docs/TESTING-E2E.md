@@ -30,8 +30,9 @@ E2E_BASE_URL=https://<hash>.ping-pang-paris.pages.dev npx playwright test
 ## Pre-requis
 
 - `scripts/fftt/.env` renseigne (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`) : le
-  script de provisioning cree/confirme le compte de test via l'API admin et le marque
-  `onboarded`, objectif hebdo remis a `null` (baseline 3h).
+  script de provisioning cree/confirme via l'API admin **deux** comptes onboardes,
+  `e2e-runner` (pilote) et `e2e-peer` (destinataire des messages / futur adversaire),
+  et remet le pilote a plat (objectif `null`, seances / creneaux / tournois / messages vides).
 - La PWA cible doit contenir le code a tester (des `testID` sont poses dans l'app :
   `train-hero`, `hero-goal`, `goal-slider`, `goal-value`, `goal-save`). Deployer avant de tester.
 
@@ -61,6 +62,9 @@ E2E_BASE_URL=https://<hash>.ping-pang-paris.pages.dev npx playwright test
 | **TC-08** | Creer une seance (wizard) | Connecte, aucune seance | CTA "J'ai joué" -> choisir un coup -> Continuer x4 -> Enregistrer | Retour sur Train, l'etat vide disparait, la seance apparait, et +1 en base |
 | **TC-09** | Ecrans secondaires | Connecte | Deep-link `/mes-seances`, `/mes-tournois`, `/notifications`, `/profile`, `/settings` | Chaque ecran rend son contenu |
 | **TC-10** | Deconnexion | Connecte | `/settings` -> "Se déconnecter" | Session videe -> retour a l'ecran welcome |
+| **TC-11** | Creer un tournoi | Connecte | `/tournoi-new` -> nom -> "Créer le tournoi" | Redirection vers l'ecran du tournoi (nom affiche), +1 en base |
+| **TC-12** | Envoyer un message | Connecte | `/chat` avec le compte pair -> taper -> Entree | Le message apparait dans le fil |
+| **TC-13** | Proposer un creneau | Connecte | `/new-slot` avec un lieu -> jour futur -> "Publier le créneau" | Alerte "Créneau publié", +1 creneau en base |
 
 ### Connexion (setup)
 
@@ -73,8 +77,9 @@ session. La session Supabase vit dans le `localStorage`, reutilisee ensuite sans
 - **1 worker, base prod** : les tests sont sequentiels pour ne pas marteler la base.
 - **Idempotence** : TC-04 choisit une cible differente de la valeur courante ; le provisioning
   remet l'objectif a `null` et vide les seances a chaque `npm run e2e`.
-- **Tests mutatifs** : TC-07 (seed d'une seance) et TC-08 (creation via l'UI) ecrivent en base
-  sur le SEUL compte de test et nettoient derriere eux via `e2e/admin.ts` (service_role).
+- **Tests mutatifs** : TC-07/08 (seances), TC-11 (tournoi), TC-12 (message), TC-13 (creneau)
+  ecrivent en base sur les SEULS comptes de test et nettoient derriere eux via
+  `e2e/admin.ts` (service_role). Le provisioning re-nettoie aussi au debut de chaque run.
 - **Artefacts** : traces + captures conservees a l'echec sous `test-results/`, rapport HTML
   sous `playwright-report/` (git-ignores).
 - **Auth OTP** : en prod l'app est en OTP email ; l'ecran `/login` (email + mot de passe) reste
