@@ -97,4 +97,13 @@ if (!up.ok) {
   console.error('✗ upsert players', up.status, JSON.stringify(body).slice(0, 300));
   process.exit(1);
 }
-console.log(`✓ compte e2e prêt: ${E2E_EMAIL} (id ${id}) — onboardé, objectif hebdo=null (3h)`);
+
+// Etat propre : on efface les seances d'entrainement du compte de test (les tests en
+// creent/seedent puis nettoient, mais on repart d'une ardoise vide a chaque run).
+const del = await fetch(`${BASE}/rest/v1/training_sessions?player_id=eq.${id}`, {
+  method: 'DELETE',
+  headers: { ...h, Prefer: 'return=minimal' },
+});
+if (!del.ok) console.warn('⚠ nettoyage training_sessions', del.status, await del.text());
+
+console.log(`✓ compte e2e prêt: ${E2E_EMAIL} (id ${id}) — onboardé, objectif=null (3h), séances vidées`);

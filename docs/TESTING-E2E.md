@@ -41,7 +41,8 @@ E2E_BASE_URL=https://<hash>.ping-pang-paris.pages.dev npx playwright test
 | --- | --- |
 | `playwright.config.ts` | 3 projets : `setup` (login) -> `authed` (tests connectes) ; `anon` (sans session) |
 | `e2e/creds.ts` | identifiants + URL (surcharge par env) |
-| `e2e/provision.mjs` | cree le compte de test (API admin), idempotent |
+| `e2e/provision.mjs` | cree le compte de test (API admin) + vide ses seances, idempotent |
+| `e2e/admin.ts` | helpers service_role pour seeder/nettoyer (objectif, seances) cote test |
 | `e2e/tests/auth.setup.ts` | connexion + sauvegarde de session (`storageState`) |
 | `e2e/tests/*.spec.ts` | scenarios (voir plus bas) |
 | `e2e/tests/*.anon.spec.ts` | scenarios sans session |
@@ -54,6 +55,12 @@ E2E_BASE_URL=https://<hash>.ping-pang-paris.pages.dev npx playwright test
 | **TC-02** | Navigation tab bar | Connecte | Cliquer chaque onglet (Défis, Ranking, Accueil, Map, Train) | L'onglet clique passe `aria-selected=true` |
 | **TC-03** | Rendu des ecrans | Connecte | Ouvrir `/jouer`, `/classement`, `/carte`, `/train` | Chaque ecran affiche son contenu (Défis / Ranking Mondial / Où jouer ? / hero Entrainement) |
 | **TC-04** | Objectif hebdo configurable | Connecte | Ecran Entrainement -> taper le hero -> deplacer le slider -> Enregistrer -> recharger | La feuille s'ouvre, la valeur change, le hero se met a jour, et l'objectif **persiste** apres rechargement |
+| **TC-05a** | Login : champs requis | Pas de session | `/login` -> "Se connecter" sans rien saisir | Alerte "Champs requis", on reste sur le login |
+| **TC-05b** | Login : mauvais mot de passe | Pas de session | `/login` -> email valide + mauvais mot de passe | Alerte "Erreur", on reste sur le login |
+| **TC-07** | Objectif atteint | Connecte, semaine seedee a 4h, cible 3h | Ouvrir `/train` | Le hero affiche "Objectif de la semaine atteint" |
+| **TC-08** | Creer une seance (wizard) | Connecte, aucune seance | CTA "J'ai joué" -> choisir un coup -> Continuer x4 -> Enregistrer | Retour sur Train, l'etat vide disparait, la seance apparait, et +1 en base |
+| **TC-09** | Ecrans secondaires | Connecte | Deep-link `/mes-seances`, `/mes-tournois`, `/notifications`, `/profile`, `/settings` | Chaque ecran rend son contenu |
+| **TC-10** | Deconnexion | Connecte | `/settings` -> "Se déconnecter" | Session videe -> retour a l'ecran welcome |
 
 ### Connexion (setup)
 
@@ -65,7 +72,9 @@ session. La session Supabase vit dans le `localStorage`, reutilisee ensuite sans
 
 - **1 worker, base prod** : les tests sont sequentiels pour ne pas marteler la base.
 - **Idempotence** : TC-04 choisit une cible differente de la valeur courante ; le provisioning
-  remet l'objectif a `null` a chaque `npm run e2e`.
+  remet l'objectif a `null` et vide les seances a chaque `npm run e2e`.
+- **Tests mutatifs** : TC-07 (seed d'une seance) et TC-08 (creation via l'UI) ecrivent en base
+  sur le SEUL compte de test et nettoient derriere eux via `e2e/admin.ts` (service_role).
 - **Artefacts** : traces + captures conservees a l'echec sous `test-results/`, rapport HTML
   sous `playwright-report/` (git-ignores).
 - **Auth OTP** : en prod l'app est en OTP email ; l'ecran `/login` (email + mot de passe) reste

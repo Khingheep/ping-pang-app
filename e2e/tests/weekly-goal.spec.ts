@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { deleteSessions, resetGoal, seedSession, setGoal } from '../admin';
+
 /**
  * TC-04 — Objectif hebdo configurable (la feature du jour).
  * Le hero de l'ecran Entrainement est tappable -> feuille avec un slider -> on change
@@ -50,4 +52,18 @@ test('TC-04 objectif hebdo : editer + persister', async ({ page }) => {
   // Persistance : rechargement complet de la page.
   await page.goto('/train');
   await expect(heroGoal).toContainText(target.text, { timeout: 30_000 });
+});
+
+test('TC-07 objectif atteint quand la semaine depasse la cible', async ({ page }) => {
+  // Semaine a 4h avec un objectif a 3h -> le hero doit afficher "atteint".
+  await deleteSessions();
+  await setGoal(180);
+  await seedSession({ durationMin: 240 });
+
+  await page.goto('/train');
+  await expect(page.getByText(/Objectif de la semaine atteint/)).toBeVisible({ timeout: 30_000 });
+
+  // Nettoyage : etat remis a plat pour les runs suivants.
+  await deleteSessions();
+  await resetGoal();
 });
