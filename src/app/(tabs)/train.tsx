@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ProgressRing } from '@/components/progress-ring';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -21,6 +22,7 @@ import {
 } from '@/lib/training/sessions';
 
 const CHART_H = 90;
+const WEEKLY_GOAL_MIN = 180; // objectif hebdo par défaut : 3h/semaine
 
 const PERIODS: { key: ActivityPeriod; label: string }[] = [
   { key: 'week', label: 'Sem' },
@@ -48,6 +50,11 @@ export default function TrainScreen() {
 
   const maxStroke = Math.max(1, ...(stats?.byStroke ?? []).map((s) => s.min));
 
+  // Hero « coach » : progression vers l'objectif hebdo + série.
+  const weekMin = stats?.weekMin ?? 0;
+  const streak = stats?.streak ?? 0;
+  const goalProgress = Math.min(1, weekMin / WEEKLY_GOAL_MIN);
+
   // Graphe d'activité filtrable : la série + le total dépendent de la période choisie.
   const activitySeries = stats?.activity[period] ?? [];
   const maxBar = Math.max(1, ...activitySeries.map((b) => b.min));
@@ -60,91 +67,102 @@ export default function TrainScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Entraînements</ThemedText>
 
+          {/* Hero « coach » : anneau objectif hebdo + série 🔥 */}
+          <View style={styles.hero}>
+            <ProgressRing progress={goalProgress} size={78} color={Palette.lime}>
+              <View style={{ alignItems: 'center' }}>
+                <ThemedText type="cardTitle" style={{ color: Palette.whitePP }}>
+                  {formatDuration(weekMin)}
+                </ThemedText>
+                <ThemedText type="small" style={styles.heroGoal}>
+                  / {formatDuration(WEEKLY_GOAL_MIN)}
+                </ThemedText>
+              </View>
+            </ProgressRing>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="cardTitle" style={{ color: Palette.whitePP }}>
+                {streak > 0 ? `🔥 ${streak} semaine${streak > 1 ? 's' : ''} de suite` : 'Ta semaine 🏓'}
+              </ThemedText>
+              <ThemedText type="small" style={styles.heroSub}>
+                {weekMin >= WEEKLY_GOAL_MIN
+                  ? 'Objectif de la semaine atteint 💪'
+                  : weekMin > 0
+                    ? `Plus que ${WEEKLY_GOAL_MIN - weekMin} min pour ton objectif`
+                    : 'Lance ta première séance de la semaine'}
+              </ThemedText>
+            </View>
+          </View>
+
+          {/* CTA principal */}
           <Pressable style={styles.logBtn} onPress={() => router.push('/new-training')}>
-            <Ionicons name="add" size={22} color={Palette.evergreen} />
-            <ThemedText type="cardTitle" style={{ color: Palette.evergreen }}>
-              Renseigner mon entraînement
+            <ThemedText type="cardTitle" style={styles.logBtnTxt}>
+              🏓  J&apos;ai joué
             </ThemedText>
           </Pressable>
 
-          {/* Raccourcis : répéter une séance récente */}
+          {/* Reprendre une séance récente */}
           {templates.length > 0 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.tplRow}
-              style={styles.tplScroll}>
-              {templates.map((t) => {
-                const partnerLabel = t.isSolo ? 'Solo' : partnersLabel(t) ?? t.partnerLevel ?? null;
-                return (
-                  <Pressable
-                    key={t.id}
-                    style={styles.tplCard}
-                    onPress={() => router.push({ pathname: '/new-training', params: { template: t.id } })}>
-                    <View style={styles.tplHead}>
-                      <ThemedText type="cardTitle" themeColor="brand">
-                        {formatDuration(t.durationMin)}
-                      </ThemedText>
-                      <Ionicons name="repeat" size={16} color={Palette.onyx} />
-                    </View>
-                    <ThemedText type="small" numberOfLines={2}>
-                      {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
-                    </ThemedText>
-                    {partnerLabel || t.venueName ? (
-                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                        {[partnerLabel, t.venueName].filter(Boolean).join(' · ')}
-                      </ThemedText>
-                    ) : null}
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          ) : null}
-
-          {/* Hero total */}
-          <View style={styles.hero}>
-            <ThemedText type="metric" style={styles.heroBig}>
-              {formatHours(stats?.totalMinYear ?? 0)}
-            </ThemedText>
-            <ThemedText type="small" style={{ color: Palette.whitePP, opacity: 0.8 }}>
-              temps total d&apos;entraînement cette année
-            </ThemedText>
-            {stats && stats.weekMin > 0 ? (
-              <View style={styles.weekTag}>
-                <ThemedText type="smallBold" themeColor="brand">
-                  +{formatHours(stats.weekMin)} cette semaine
-                </ThemedText>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Répartition par coup */}
-          {stats && stats.byStroke.length > 0 ? (
             <>
               <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Répartition par coup
+                Reprendre une séance
               </ThemedText>
-              <View style={styles.card}>
-                {stats.byStroke.map((s) => (
-                  <View key={s.stroke} style={styles.strokeRow}>
-                    <View style={styles.strokeHead}>
-                      <ThemedText type="smallBold">{s.stroke}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {formatHours(s.min)}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.tplRow}
+                style={styles.tplScroll}>
+                {templates.map((t) => {
+                  const partnerLabel = t.isSolo ? 'Solo' : partnersLabel(t) ?? t.partnerLevel ?? null;
+                  return (
+                    <Pressable
+                      key={t.id}
+                      style={styles.tplCard}
+                      onPress={() => router.push({ pathname: '/new-training', params: { template: t.id } })}>
+                      <View style={styles.tplHead}>
+                        <ThemedText type="cardTitle" themeColor="brand">
+                          {formatDuration(t.durationMin)}
+                        </ThemedText>
+                        <Ionicons name="repeat" size={16} color={Palette.onyx} />
+                      </View>
+                      <ThemedText type="small" numberOfLines={2}>
+                        {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
                       </ThemedText>
-                    </View>
-                    <View style={styles.track}>
-                      <View
-                        style={[
-                          styles.fill,
-                          { width: `${Math.max(6, (s.min / maxStroke) * 100)}%`, backgroundColor: Palette.onyx },
-                        ]}
-                      />
-                    </View>
-                  </View>
-                ))}
-              </View>
+                      {partnerLabel || t.venueName ? (
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                          {[partnerLabel, t.venueName].filter(Boolean).join(' · ')}
+                        </ThemedText>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </>
+          ) : null}
+
+          {/* Tuiles « cette année » */}
+          {stats ? (
+            <View style={styles.tiles}>
+              <View style={styles.tile}>
+                <ThemedText style={styles.tileNum}>{formatHours(stats.totalMinYear)}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Cette année
+                </ThemedText>
+              </View>
+              <View style={styles.tile}>
+                <ThemedText style={styles.tileNum}>{stats.count}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Séances
+                </ThemedText>
+              </View>
+              <View style={styles.tile}>
+                <ThemedText style={styles.tileNum}>
+                  {stats.weekMin > 0 ? `+${formatHours(stats.weekMin)}` : '—'}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Cette sem.
+                </ThemedText>
+              </View>
+            </View>
           ) : null}
 
           {/* Activité - filtrable par semaine / mois / année */}
@@ -191,7 +209,7 @@ export default function TrainScreen() {
                             style={{
                               width: '70%',
                               height: Math.max(3, (b.min / maxBar) * CHART_H),
-                              // Barre courante (dernière de la série) en evergreen, le reste en violet.
+                              // Barre courante (dernière de la série) en onyx, le reste en gris.
                               backgroundColor:
                                 b.min > 0
                                   ? i === activitySeries.length - 1
@@ -213,6 +231,35 @@ export default function TrainScreen() {
             </>
           ) : null}
 
+          {/* Répartition par coup */}
+          {stats && stats.byStroke.length > 0 ? (
+            <>
+              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
+                Répartition par coup
+              </ThemedText>
+              <View style={styles.card}>
+                {stats.byStroke.map((s) => (
+                  <View key={s.stroke} style={styles.strokeRow}>
+                    <View style={styles.strokeHead}>
+                      <ThemedText type="smallBold">{s.stroke}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {formatHours(s.min)}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.track}>
+                      <View
+                        style={[
+                          styles.fill,
+                          { width: `${Math.max(6, (s.min / maxStroke) * 100)}%`, backgroundColor: Palette.onyx },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : null}
+
           {/* Mes séances (récentes) */}
           <View style={styles.seancesHead}>
             <ThemedText type="sectionTitle" themeColor="textSecondary">
@@ -228,7 +275,7 @@ export default function TrainScreen() {
           </View>
           {sessions.length === 0 ? (
             <ThemedText type="small" themeColor="textMuted">
-              Aucune séance enregistrée. Renseigne ta première séance !
+              Aucune séance enregistrée. Note ta première séance !
             </ThemedText>
           ) : (
             <View style={{ gap: Spacing.two }}>
@@ -265,17 +312,35 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Palette.whitePP },
   flex: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
+
+  hero: {
+    marginTop: Spacing.four,
+    backgroundColor: Palette.onyx,
+    borderRadius: Radius.sm,
+    padding: Spacing.four,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.four,
+  },
+  heroGoal: { color: 'rgba(245,243,243,0.6)', fontSize: 11, lineHeight: 14 },
+  heroSub: { color: 'rgba(245,243,243,0.72)', marginTop: 2 },
+
   logBtn: {
     marginTop: Spacing.three,
-    height: 56,
-    borderRadius: Radius.xs,
+    height: 60,
+    borderRadius: Radius.sm,
     backgroundColor: Palette.lime,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.two,
   },
-  tplScroll: { marginTop: Spacing.three },
+  logBtnTxt: { color: Palette.evergreen, fontSize: 19 },
+
+  tiles: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.four },
+  tile: { flex: 1, backgroundColor: Palette.white, borderRadius: Radius.sm, padding: Spacing.three, gap: Spacing.half },
+  tileNum: { fontFamily: 'OpenSauceOne-Bold', fontSize: 22, color: Palette.onyx },
+
+  tplScroll: { marginTop: 0 },
   tplRow: { gap: Spacing.two, paddingRight: Spacing.four },
   tplCard: {
     width: 168,
@@ -285,22 +350,7 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
   },
   tplHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  hero: {
-    marginTop: Spacing.four,
-    backgroundColor: Palette.onyx,
-    borderRadius: Radius.sm,
-    padding: Spacing.four,
-    gap: Spacing.one,
-  },
-  heroBig: { color: Palette.lime }, // taille = token Display (32) via type="metric"
-  weekTag: {
-    alignSelf: 'flex-start',
-    marginTop: Spacing.two,
-    backgroundColor: Palette.lime,
-    borderRadius: Radius.pill,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.half,
-  },
+
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   activityHead: {
     marginTop: Spacing.five,
@@ -309,11 +359,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  segment: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-    marginBottom: Spacing.two,
-  },
+  segment: { flexDirection: 'row', gap: Spacing.two, marginBottom: Spacing.two },
   segmentBtn: {
     flex: 1,
     alignItems: 'center',

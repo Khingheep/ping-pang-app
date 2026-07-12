@@ -75,6 +75,7 @@ export type TrainingStats = {
   weekMin: number;
   monthMin: number;
   count: number;
+  streak: number; // semaines consécutives avec ≥1 séance (série)
   byStroke: StrokeStat[];
   weekly: { label: string; min: number }[];
   /** Séries pré-calculées pour le filtre Semaine / Mois / Année du graphe d'activité. */
@@ -638,11 +639,13 @@ export async function fetchTrainingStats(playerId: string): Promise<TrainingStat
   let monthMin = 0;
   let yearCount = 0;
   const strokeMap = new Map<string, number>();
+  const weeksWithSession = new Set<number>(); // clés = début de semaine (lundi) des séances
 
   for (const r of rows) {
     const dur = r.duration_min ?? 0;
     const d = new Date(r.created_at);
     const t = d.getTime();
+    weeksWithSession.add(startOfWeek(d).getTime());
 
     if (d.getFullYear() === now.getFullYear()) {
       totalMinYear += dur;
@@ -680,11 +683,26 @@ export async function fetchTrainingStats(playerId: string): Promise<TrainingStat
     .map(([stroke, min]) => ({ stroke, min: Math.round(min) }))
     .sort((a, b) => b.min - a.min);
 
+  // Série : semaines consécutives avec ≥1 séance. La semaine EN COURS peut être vide (pas finie) →
+  // on tolère et on démarre le décompte à la semaine précédente.
+  let streak = 0;
+  let cur = startOfWeek(now);
+  if (!weeksWithSession.has(cur.getTime())) {
+    cur.setDate(cur.getDate() - 7);
+    cur = startOfWeek(cur);
+  }
+  while (weeksWithSession.has(cur.getTime())) {
+    streak += 1;
+    cur.setDate(cur.getDate() - 7);
+    cur = startOfWeek(cur);
+  }
+
   return {
     totalMinYear,
     weekMin,
     monthMin,
     count: yearCount,
+    streak,
     byStroke,
     weekly: weekly.map((w) => ({ label: w.label, min: w.min })),
     activity: {
