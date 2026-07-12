@@ -24,6 +24,7 @@ export type PlayerProfile = {
   goal_elo: number | null; // objectif d'ELO fixé manuellement (null = aucun)
   goal_start_elo: number | null; // ELO au moment où l'objectif a été posé (base de la progression)
   goal_deadline: string | null; // 1er du mois cible (ISO date) ou null
+  weekly_goal_min: number | null; // objectif hebdo d'entraînement (min) ; null = défaut app (3h)
   level: string;
   is_premium: boolean;
   onboarded: boolean;
@@ -80,7 +81,7 @@ export async function fetchMyProfile(userId: string): Promise<PlayerProfile | nu
   const { data } = await supabase
     .from('players')
     .select(
-      'id, handle, display_name, avatar_url, bio, city, country, play_style, handedness, player_type, fftt_id, fftt_points, fftt_club, elo, glicko_rd, goal_elo, goal_start_elo, goal_deadline, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
+      'id, handle, display_name, avatar_url, bio, city, country, play_style, handedness, player_type, fftt_id, fftt_points, fftt_club, elo, glicko_rd, goal_elo, goal_start_elo, goal_deadline, weekly_goal_min, level, is_premium, onboarded, profile_public, stats_visible, visible_on_map, share_elo, notif_challenges, notif_results',
     )
     .eq('id', userId)
     .maybeSingle();
@@ -151,6 +152,12 @@ export async function updateMyLocation(userId: string, coords: { lat: number; ln
 /** Met à jour les préférences (confidentialité / notifications). */
 export async function updatePrefs(userId: string, patch: Partial<AccountPrefs>): Promise<void> {
   const { error } = await supabase.from('players').update(patch).eq('id', userId);
+  if (error) throw error;
+}
+
+/** Fixe l'objectif hebdomadaire d'entraînement (minutes). null = revient au défaut app. */
+export async function updateWeeklyGoal(userId: string, min: number | null): Promise<void> {
+  const { error } = await supabase.from('players').update({ weekly_goal_min: min }).eq('id', userId);
   if (error) throw error;
 }
 

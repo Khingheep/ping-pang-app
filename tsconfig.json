@@ -22,6 +22,10 @@
     "scripts",
     "supabase/functions",
     "dist",
+    "dist-web",
+    "e2e",
+    "playwright-report",
+    "test-results",
     ".expo-smoke"
   ]
 }

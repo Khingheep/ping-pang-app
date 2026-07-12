@@ -5,9 +5,13 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ProgressRing } from '@/components/progress-ring';
+import { StepSlider } from '@/components/step-slider';
+import { SwipeSheet } from '@/components/swipe-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
+import { updateWeeklyGoal, useMyProfile } from '@/lib/players/profile';
+import { notify } from '@/lib/ui/alert';
 import {
   fetchSessionTemplates,
   fetchTrainingSessions,
@@ -32,10 +36,37 @@ const PERIODS: { key: ActivityPeriod; label: string }[] = [
 
 export default function TrainScreen() {
   const { session } = useAuth();
+  const myId = session?.user?.id;
+  const profileQ = useMyProfile(myId);
   const [stats, setStats] = useState<TrainingStats | null>(null);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [period, setPeriod] = useState<ActivityPeriod>('week');
+
+  // Objectif hebdo configurable (champ profil ; null = défaut app 3h).
+  const goalMin = profileQ.data?.weekly_goal_min ?? WEEKLY_GOAL_MIN;
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState(WEEKLY_GOAL_MIN);
+  const [savingGoal, setSavingGoal] = useState(false);
+
+  const openGoal = () => {
+    setGoalDraft(goalMin);
+    setGoalOpen(true);
+  };
+
+  const saveGoal = async () => {
+    if (!myId || savingGoal) return;
+    setSavingGoal(true);
+    try {
+      await updateWeeklyGoal(myId, goalDraft);
+      await profileQ.refetch();
+      setGoalOpen(false);
+    } catch {
+      notify('Oups', "Impossible d'enregistrer l'objectif. Réessaie.");
+    } finally {
+      setSavingGoal(false);
+    }
+  };
 
   const load = useCallback(() => {
     const id = session?.user?.id;
@@ -53,7 +84,7 @@ export default function TrainScreen() {
   // Hero « coach » : progression vers l'objectif hebdo + série.
   const weekMin = stats?.weekMin ?? 0;
   const streak = stats?.streak ?? 0;
-  const goalProgress = Math.min(1, weekMin / WEEKLY_GOAL_MIN);
+  const goalProgress = Math.min(1, weekMin / goalMin);
 
   // Graphe d'activité filtrable : la série + le total dépendent de la période choisie.
   const activitySeries = stats?.activity[period] ?? [];
@@ -67,15 +98,21 @@ export default function TrainScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <ThemedText type="title">Entraînements</ThemedText>
 
-          {/* Hero « coach » : anneau objectif hebdo + série 🔥 */}
-          <View style={styles.hero}>
+          {/* Hero « coach » : anneau objectif hebdo + série 🔥 (tap = éditer l'objectif) */}
+          <Pressable
+            testID="train-hero"
+            accessibilityRole="button"
+            accessibilityLabel="Modifier l'objectif hebdomadaire"
+            style={styles.hero}
+            onPress={openGoal}>
+            <Ionicons name="create-outline" size={16} color="rgba(245,243,243,0.5)" style={styles.heroEdit} />
             <ProgressRing progress={goalProgress} size={78} color={Palette.lime}>
               <View style={{ alignItems: 'center' }}>
                 <ThemedText type="cardTitle" style={{ color: Palette.whitePP }}>
                   {formatDuration(weekMin)}
                 </ThemedText>
-                <ThemedText type="small" style={styles.heroGoal}>
-                  / {formatDuration(WEEKLY_GOAL_MIN)}
+                <ThemedText testID="hero-goal" type="small" style={styles.heroGoal}>
+                  / {formatDuration(goalMin)}
                 </ThemedText>
               </View>
             </ProgressRing>
@@ -84,14 +121,14 @@ export default function TrainScreen() {
                 {streak > 0 ? `🔥 ${streak} semaine${streak > 1 ? 's' : ''} de suite` : 'Ta semaine 🏓'}
               </ThemedText>
               <ThemedText type="small" style={styles.heroSub}>
-                {weekMin >= WEEKLY_GOAL_MIN
+                {weekMin >= goalMin
                   ? 'Objectif de la semaine atteint 💪'
                   : weekMin > 0
-                    ? `Plus que ${WEEKLY_GOAL_MIN - weekMin} min pour ton objectif`
+                    ? `Plus que ${goalMin - weekMin} min pour ton objectif`
                     : 'Lance ta première séance de la semaine'}
               </ThemedText>
             </View>
-          </View>
+          </Pressable>
 
           {/* CTA principal */}
           <Pressable style={styles.logBtn} onPress={() => router.push('/new-training')}>
@@ -304,6 +341,38 @@ export default function TrainScreen() {
           )}
         </ScrollView>
       </SafeAreaView>
+
+      {/* Éditeur d'objectif hebdo */}
+      <SwipeSheet visible={goalOpen} onClose={() => setGoalOpen(false)} style={styles.goalSheet}>
+        <ThemedText type="sectionTitle">Objectif hebdomadaire</ThemedText>
+        <ThemedText testID="goal-value" style={styles.goalValue}>
+          {formatDuration(goalDraft)}
+        </ThemedText>
+        <View testID="goal-slider">
+          <StepSlider value={goalDraft} min={30} max={600} step={30} onChange={setGoalDraft} />
+        </View>
+        <View style={styles.goalScaleRow}>
+          <ThemedText type="small" themeColor="textMuted">
+            30 min
+          </ThemedText>
+          <ThemedText type="small" themeColor="textMuted">
+            10 h
+          </ThemedText>
+        </View>
+        <ThemedText type="small" themeColor="textSecondary" style={styles.goalHint}>
+          Le temps de jeu que tu vises chaque semaine. L&apos;anneau suit ta progression.
+        </ThemedText>
+        <Pressable
+          testID="goal-save"
+          accessibilityRole="button"
+          style={[styles.goalSave, savingGoal && { opacity: 0.6 }]}
+          disabled={savingGoal}
+          onPress={saveGoal}>
+          <ThemedText type="cardTitle" style={styles.goalSaveTxt}>
+            {savingGoal ? 'Enregistrement…' : 'Enregistrer'}
+          </ThemedText>
+        </Pressable>
+      </SwipeSheet>
     </View>
   );
 }
@@ -324,6 +393,21 @@ const styles = StyleSheet.create({
   },
   heroGoal: { color: 'rgba(245,243,243,0.6)', fontSize: 11, lineHeight: 14 },
   heroSub: { color: 'rgba(245,243,243,0.72)', marginTop: 2 },
+  heroEdit: { position: 'absolute', top: Spacing.three, right: Spacing.three },
+
+  goalSheet: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, gap: Spacing.three },
+  goalValue: { fontFamily: 'OpenSauceOne-Bold', fontSize: 34, color: Palette.onyx, textAlign: 'center' },
+  goalScaleRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  goalHint: { textAlign: 'center' },
+  goalSave: {
+    height: 54,
+    borderRadius: Radius.xs,
+    backgroundColor: Palette.onyx,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.two,
+  },
+  goalSaveTxt: { color: Palette.whitePP },
 
   logBtn: {
     marginTop: Spacing.three,

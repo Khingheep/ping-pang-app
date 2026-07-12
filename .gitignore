@@ -56,5 +56,14 @@ dist-web/
 # Supabase CLI local state
 supabase/.temp/
 
+# Playwright e2e
+playwright-report/
+test-results/
+e2e/.auth/
+.playwright/
+
+# backups de donnees (PII) - ne jamais committer
+scripts/backup-*.json
+
 # generated docs
 doc/
