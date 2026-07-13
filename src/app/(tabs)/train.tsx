@@ -396,7 +396,9 @@ const styles = StyleSheet.create({
   heroEdit: { position: 'absolute', top: Spacing.three, right: Spacing.three },
 
   goalSheet: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, gap: Spacing.three },
-  goalValue: { fontFamily: 'OpenSauceOne-Bold', fontSize: 34, color: Palette.onyx, textAlign: 'center' },
+  // lineHeight explicite : sans ça, la valeur hérite du lineHeight 20 du type « default »
+  // de ThemedText et le glyphe (34px) est coupé en haut/bas.
+  goalValue: { fontFamily: 'OpenSauceOne-Bold', fontSize: 34, lineHeight: 44, color: Palette.onyx, textAlign: 'center' },
   goalScaleRow: { flexDirection: 'row', justifyContent: 'space-between' },
   goalHint: { textAlign: 'center' },
   goalSave: {
