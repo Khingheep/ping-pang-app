@@ -1,4 +1,4 @@
-import { StyleSheet, Text, type TextProps } from 'react-native';
+import { StyleSheet, Text, type TextProps, type TextStyle } from 'react-native';
 
 import { Fonts, ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -25,7 +25,16 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
   const theme = useTheme();
   const color = theme[themeColor ?? (type === 'link' ? 'brand' : 'text')];
 
-  return <Text style={[{ color }, styles[type], style]} {...rest} />;
+  // Garde-fou anti-clipping : overrider `fontSize` via `style` sans redonner de `lineHeight`
+  // laisse la valeur (plus petite) du `type`, et la ligne rogne le glyphe (ex : fontSize 22
+  // sur un lineHeight 20). Si le lineHeight resolu est plus petit que la police, on l'elargit.
+  const flat = StyleSheet.flatten([styles[type], style]) as TextStyle;
+  const fix =
+    typeof flat.fontSize === 'number' && typeof flat.lineHeight === 'number' && flat.lineHeight < flat.fontSize
+      ? { lineHeight: Math.round(flat.fontSize * 1.3) }
+      : null;
+
+  return <Text style={[{ color }, flat, fix]} {...rest} />;
 }
 
 // Échelle typo du brand-guideline « Neo » — famille Open Sauce One, ~120% de line-height :
