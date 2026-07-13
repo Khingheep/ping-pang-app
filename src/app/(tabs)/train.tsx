@@ -424,7 +424,9 @@ const styles = StyleSheet.create({
 
   tiles: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.four },
   tile: { flex: 1, backgroundColor: Palette.white, borderRadius: Radius.sm, padding: Spacing.three, gap: Spacing.half },
-  tileNum: { fontFamily: 'OpenSauceOne-Bold', fontSize: 22, color: Palette.onyx },
+  // lineHeight explicite (même piège que goalValue) : sinon les chiffres des tuiles
+  // heritent du lineHeight 20 du type « default » et sont coupes.
+  tileNum: { fontFamily: 'OpenSauceOne-Bold', fontSize: 22, lineHeight: 28, color: Palette.onyx },
 
   tplScroll: { marginTop: 0 },
   tplRow: { gap: Spacing.two, paddingRight: Spacing.four },
