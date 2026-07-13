@@ -10,7 +10,10 @@
     "backgroundColor": "#F5F6F3",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "paris.pingpang.app"
+      "bundleIdentifier": "paris.pingpang.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "paris.pingpang.app",
