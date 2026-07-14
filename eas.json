@@ -22,9 +22,16 @@
     },
     "production": {
       "autoIncrement": true
+    },
+    "beta": {
+      "extends": "production",
+      "env": {
+        "APP_VARIANT": "beta"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "beta": {}
   }
 }
