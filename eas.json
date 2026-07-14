@@ -32,6 +32,10 @@
   },
   "submit": {
     "production": {},
-    "beta": {}
+    "beta": {
+      "ios": {
+        "ascAppId": "6790777316"
+      }
+    }
   }
 }
