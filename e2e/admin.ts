@@ -134,6 +134,29 @@ export async function seedSession(p: { durationMin: number; strokes?: string[] }
   if (!r.ok) throw new Error(`seedSession: ${r.status} ${await r.text()}`);
 }
 
+/** Seed une seance et renvoie son id (pour naviguer directement dessus). */
+export async function seedSessionId(p: { durationMin: number; strokes?: string[] }): Promise<string> {
+  const id = await playerId();
+  const r = await fetch(`${BASE}/rest/v1/training_sessions`, {
+    method: 'POST',
+    headers: { ...H, Prefer: 'return=representation' },
+    body: JSON.stringify({ player_id: id, duration_min: p.durationMin, strokes: p.strokes ?? ['Coup droit'], is_solo: true, photo_urls: [] }),
+  });
+  if (!r.ok) throw new Error(`seedSessionId: ${r.status} ${await r.text()}`);
+  const rows = (await r.json()) as { id: string }[];
+  return rows[0].id;
+}
+
+/** Nombre d'aces (likes) sur les commentaires d'une seance (join embarque). */
+export async function sessionCommentAceCount(sessionId: string): Promise<number> {
+  const r = await fetch(
+    `${BASE}/rest/v1/session_comment_likes?select=comment_id,session_comments!inner(session_id)&session_comments.session_id=eq.${sessionId}`,
+    { headers: H },
+  );
+  const rows = (await r.json()) as unknown[];
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
 /** Nombre de seances du compte de test (pour asserter les increments). */
 export async function countSessions(): Promise<number> {
   const id = await playerId();

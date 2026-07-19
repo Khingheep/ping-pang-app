@@ -54,6 +54,9 @@ export type LeaderboardEntry = {
   lng: number | null;
 };
 
+/** Ligne de classement enrichie de la variation d'ELO sur la période (RPC leaderboard_ranked). */
+export type RankedEntry = LeaderboardEntry & { delta: number };
+
 const LIST_COLS = 'id, handle, display_name, avatar_url, city, country, elo, level, lat, lng';
 
 function handleFromUser(user: User): string {
@@ -220,15 +223,14 @@ export async function fetchEloDelta(days = 7): Promise<number> {
   return (data as number | null) ?? 0;
 }
 
-/** Classement par ELO décroissant. */
-export async function fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
-  const { data } = await supabase
-    .from('players')
-    .select(LIST_COLS)
-    .eq('is_guest', false) // les invités de tournoi (sans compte) ne comptent pas au classement
-    .order('elo', { ascending: false })
-    .limit(limit);
-  return (data as LeaderboardEntry[] | null) ?? [];
+/**
+ * Classement par ELO décroissant + variation d'ELO de chaque joueur sur `days` jours
+ * (indicateur de tendance ▲/▼ dans l'écran Ranking). Calcul serveur sur `rating_history`.
+ */
+export async function fetchLeaderboard(limit = 200, days = 7): Promise<RankedEntry[]> {
+  const { data, error } = await supabase.rpc('leaderboard_ranked', { p_limit: limit, p_days: days });
+  if (error || !data) return [];
+  return data as RankedEntry[];
 }
 
 /** Autres joueurs (pour les défis), hors soi-même. */
@@ -292,11 +294,11 @@ export function useEloDelta(userId: string | undefined, days = 7) {
   });
 }
 
-/** Classement par ELO (mis en cache). */
-export function useLeaderboard(limit = 200) {
+/** Classement par ELO + variation sur `days` jours (mis en cache). */
+export function useLeaderboard(limit = 200, days = 7) {
   return useQuery({
     queryKey: qk.leaderboard(),
-    queryFn: () => fetchLeaderboard(limit),
+    queryFn: () => fetchLeaderboard(limit, days),
     staleTime: STALE.leaderboard,
   });
 }

@@ -192,7 +192,7 @@ export const MatchScoreboard = memo(function MatchScoreboard({
           <Pressable style={styles.socialBtn} onPress={onLike} hitSlop={8} disabled={!onLike}>
             <Ionicons name={liked ? 'heart' : 'heart-outline'} size={20} color={liked ? Palette.redInk : Palette.grey} />
             <ThemedText type="smallBold" themeColor={liked ? 'danger' : 'textSecondary'}>
-              {likeCount && likeCount > 0 ? likeCount : "J'aime"}
+              {likeCount && likeCount > 0 ? `${likeCount} ace${likeCount > 1 ? 's' : ''}` : 'Ace'}
             </ThemedText>
           </Pressable>
           <Pressable style={styles.socialBtn} onPress={onComment} hitSlop={8} disabled={!onComment}>

@@ -576,6 +576,9 @@ const styles = StyleSheet.create({
   statusPill: { borderRadius: Radius.pill, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
   cardMain: { flex: 1 },
   defier: {
+    alignSelf: 'stretch', // prend toute la hauteur de la carte → surface cliquable max
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: Palette.onyx,
     borderRadius: Radius.xs,
     paddingHorizontal: Spacing.four,

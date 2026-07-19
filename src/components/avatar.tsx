@@ -6,7 +6,8 @@ import { Palette } from '@/constants/theme';
 
 const COLORS = [Palette.blue, Palette.purple, Palette.lime];
 
-function colorFor(seed: string): string {
+/** Couleur déterministe (pastille de fallback) dérivée d'une graine (nom). */
+export function colorFor(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return COLORS[h % COLORS.length];

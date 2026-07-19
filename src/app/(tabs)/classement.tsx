@@ -1,35 +1,64 @@
 /**
- * Onglet « Ranking Mondial » (Figma « Neo ») : podium top 3 (blocs colorés) + leaderboard
- * filtrable Tous/France/Paris/Amis. La ligne du joueur courant est surlignée lime.
- * Le rang/ELO/delta 7 j reste affiché en résumé sous le titre (aucune perte de donnée).
+ * Onglet « Ranking » (Figma « Neo ») : filtres Tous/France/Paris/Amis, carte « Tu es classé Ne »
+ * (le bouton flèche ancre/scrolle jusqu'à sa propre ligne), podium top 3 en BARRES (or/argent/
+ * bronze) puis leaderboard. Chaque ligne montre la variation d'ELO sur 7 j : ▲ +N (vert) si
+ * hausse, ▼ -N (rouge) si baisse, rien si stable. La ligne du joueur courant est surlignée lime.
  *
- * Données via react-query (cache + refetch au focus) ; liste virtualisée en FlatList.
+ * Données via react-query (RPC leaderboard_ranked = classement + delta) ; liste en FlatList.
  */
 
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
-import { useEloDelta, useLeaderboard, useMyProfile, type LeaderboardEntry } from '@/lib/players/profile';
+import { useLeaderboard, useMyProfile, type RankedEntry } from '@/lib/players/profile';
 import { useRefreshOnFocus } from '@/lib/query/use-refresh-on-focus';
 import { useFriendIds } from '@/lib/social/friends';
 
 const FILTERS = ['Tous', 'France', 'Paris', 'Amis'] as const;
 
-// Ordre visuel du podium : #2 à gauche, #1 au centre (surélevé), #3 à droite.
+// Hauteur fixe d'une ligne (avatar 36 / 2 lignes de texte + padding 2×16) + séparateur 8.
+// Constante → getItemLayout fiable + calcul d'offset exact pour l'animation d'ancrage.
+const ROW_HEIGHT = 78;
+
+// Ordre visuel du podium : #2 à gauche, #1 au centre (barre la plus haute), #3 à droite.
 const PODIUM = [
-  { slot: 1, rank: 2, bg: Palette.blue, height: 150 },
-  { slot: 0, rank: 1, bg: Palette.lime, height: 180 },
-  { slot: 2, rank: 3, bg: Palette.purple, height: 150 },
+  { slot: 1, rank: 2, bar: Palette.silver, barH: 96 },
+  { slot: 0, rank: 1, bar: Palette.gold, barH: 148 },
+  { slot: 2, rank: 3, bar: Palette.bronze, barH: 72 },
 ] as const;
 
-function Separator() {
-  return <View style={styles.separator} />;
+/** Double chevron (SVG → identique natif/PWA) pour la tendance de classement. */
+function MoveChevron({ up, color, size = 16 }: { up: boolean; color: string; size?: number }) {
+  const d = up ? 'M5 12.5 L12 6 L19 12.5 M5 18.5 L12 12 L19 18.5' : 'M5 11.5 L12 18 L19 11.5 M5 5.5 L12 12 L19 5.5';
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d={d} stroke={color} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </Svg>
+  );
+}
+
+/** Tendance d'ELO d'une ligne : +N vert / -N rouge / rien si stable. */
+function MoveTag({ delta }: { delta: number }) {
+  if (!delta) return null;
+  const up = delta > 0;
+  const color = up ? Palette.greenInk : Palette.redInk;
+  return (
+    <View style={styles.moveTag}>
+      <ThemedText type="smallBold" style={{ color }}>
+        {up ? '+' : ''}
+        {delta}
+      </ThemedText>
+      <MoveChevron up={up} color={color} />
+    </View>
+  );
 }
 
 export default function RankingScreen() {
@@ -37,25 +66,24 @@ export default function RankingScreen() {
   const myId = session?.user?.id;
 
   const profileQ = useMyProfile(myId);
-  const leaderboardQ = useLeaderboard(200);
+  const leaderboardQ = useLeaderboard(200, 7);
   const friendsQ = useFriendIds(myId);
-  const delta7Q = useEloDelta(myId, 7);
 
   const [filter, setFilter] = useState(0);
+  const [podColW, setPodColW] = useState(0); // largeur d'une colonne de podium (mesurée)
+  const listRef = useRef<FlatList<RankedEntry>>(null);
+  const headerH = useRef(0); // hauteur du ListHeader (titre + filtres + carte + podium)
+  const offsetY = useRef(0); // offset de scroll courant
+  const scrollAnim = useRef(new Animated.Value(0)).current; // pilote l'anim « parcours des rangs »
 
   // Rafraîchit chaque query au focus d'écran ; no-op réseau tant qu'elle est encore fraîche.
   useRefreshOnFocus(profileQ.refetch);
   useRefreshOnFocus(leaderboardQ.refetch);
   useRefreshOnFocus(friendsQ.refetch);
-  useRefreshOnFocus(delta7Q.refetch);
 
   const profile = profileQ.data ?? null;
   const rows = useMemo(() => leaderboardQ.data ?? [], [leaderboardQ.data]);
   const friendIds = useMemo(() => friendsQ.data ?? [], [friendsQ.data]);
-
-  const myRank = rows.findIndex((r) => r.id === myId) + 1;
-  const elo = profile?.elo ?? 0;
-  const delta7 = delta7Q.data ?? 0;
 
   const filtered = useMemo(
     () =>
@@ -72,8 +100,47 @@ export default function RankingScreen() {
   const top3 = filtered.slice(0, 3);
   const restData = useMemo(() => filtered.slice(3), [filtered]);
 
+  // Position du joueur dans le classement filtré (pour la carte + l'ancrage du bouton flèche).
+  const myPos = filtered.findIndex((e) => e.id === myId); // 0-based, -1 si absent
+  const myRank = myPos >= 0 ? myPos + 1 : 0;
+  const elo = profile?.elo ?? (myPos >= 0 ? filtered[myPos].elo : 0);
+
+  // Le bouton flèche « ancre » vers sa propre ligne, avec une animation qui PARCOURT les rangs
+  // (défilement contrôlé, easing) plutôt qu'un saut brut. Top 3 → on remonte simplement en haut.
+  const scrollToMe = useCallback(() => {
+    if (myPos < 0) return;
+    const restIndex = myPos - 3;
+    const target =
+      restIndex < 0 ? 0 : Math.max(0, headerH.current + restIndex * ROW_HEIGHT - Spacing.six); // ~1 ligne de marge en haut
+
+    const from = offsetY.current;
+    if (Math.abs(target - from) < 4) return; // déjà à destination
+
+    scrollAnim.stopAnimation();
+    scrollAnim.setValue(from);
+    const sub = scrollAnim.addListener(({ value }) => listRef.current?.scrollToOffset({ offset: value, animated: false }));
+    // Durée proportionnelle à la distance (plafonnée) → on « voit » les rangs défiler.
+    const duration = Math.min(1700, 450 + Math.abs(target - from) * 0.55);
+    Animated.timing(scrollAnim, { toValue: target, duration, easing: Easing.inOut(Easing.cubic), useNativeDriver: false }).start(
+      () => scrollAnim.removeListener(sub),
+    );
+  }, [myPos, scrollAnim]);
+
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    offsetY.current = e.nativeEvent.contentOffset.y;
+  }, []);
+  const onHeaderLayout = useCallback((e: LayoutChangeEvent) => {
+    headerH.current = e.nativeEvent.layout.height;
+  }, []);
+  // Largeur d'une colonne = (largeur du podium − 2 gaps) / 3 → l'avatar remplit ensuite le pilier.
+  const onPodiumLayout = useCallback((e: LayoutChangeEvent) => {
+    setPodColW((e.nativeEvent.layout.width - 2 * Spacing.two) / 3);
+  }, []);
+  // Avatar = largeur intérieure du pilier (colonne − padding 8px de chaque côté). Fallback avant mesure.
+  const avatarSize = podColW > 0 ? Math.round(podColW - 2 * Spacing.sm) : 56;
+
   const renderItem = useCallback(
-    ({ item: e, index }: { item: LeaderboardEntry; index: number }) => {
+    ({ item: e, index }: { item: RankedEntry; index: number }) => {
       const mine = e.id === myId;
       return (
         <Pressable
@@ -87,15 +154,11 @@ export default function RankingScreen() {
             <ThemedText type="cardTitle" numberOfLines={1}>
               {e.display_name}
             </ThemedText>
-            {e.city ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                {e.city}
-              </ThemedText>
-            ) : null}
+            <ThemedText type="small" themeColor="textSecondary">
+              {e.elo}
+            </ThemedText>
           </View>
-          <ThemedText type="subtitle" themeColor="brand">
-            {e.elo}
-          </ThemedText>
+          <MoveTag delta={e.delta} />
         </Pressable>
       );
     },
@@ -104,22 +167,10 @@ export default function RankingScreen() {
 
   const header = (
     <>
-      <ThemedText type="title">Ranking Mondial</ThemedText>
-
-      {myRank > 0 ? (
-        <View style={styles.meLine}>
-          <ThemedText type="small" themeColor="textSecondary">
-            #{myRank} mondial · ELO {elo}
-          </ThemedText>
-          <ThemedText type="smallBold" style={{ color: delta7 >= 0 ? Palette.onyx : Palette.redInk }}>
-            {delta7 >= 0 ? '▲ +' : '▼ '}
-            {delta7} (7j)
-          </ThemedText>
-        </View>
-      ) : null}
+      <ThemedText type="title">Ranking</ThemedText>
 
       {/* Filtres */}
-      <View style={styles.filters}>
+      <View style={styles.filtersCard}>
         {FILTERS.map((f, i) => (
           <Pressable
             key={f}
@@ -132,30 +183,51 @@ export default function RankingScreen() {
         ))}
       </View>
 
-      {/* Podium top 3 */}
+      {/* Carte « Tu es classé Ne » + ancrage vers sa ligne */}
+      {myRank > 0 ? (
+        <View style={styles.meRow}>
+          <View style={styles.meCard}>
+            <ThemedText type="cardTitle">Tu es classé {myRank}e</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {elo}
+            </ThemedText>
+          </View>
+          <Pressable testID="rank-anchor" style={styles.meArrow} onPress={scrollToMe} hitSlop={6}>
+            <Ionicons name="arrow-forward" size={24} color={Palette.whitePP} />
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Podium top 3 en barres */}
       {top3.length > 0 ? (
-        <View style={styles.podium}>
-          {PODIUM.map(({ slot, rank, bg, height }) => {
-            const e = top3[slot];
-            if (!e) return <View key={rank} style={styles.podiumSpacer} />;
-            return (
-              <Pressable
-                key={rank}
-                style={[styles.podiumCell, { backgroundColor: bg, height }]}
-                onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}>
-                <ThemedText type="subtitle">#{rank}</ThemedText>
-                <View style={styles.podiumBody}>
-                  <Avatar name={e.display_name} uri={e.avatar_url} size={40} />
-                  <ThemedText type="cardTitle" numberOfLines={1}>
-                    {e.display_name}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {e.elo}
-                  </ThemedText>
-                </View>
-              </Pressable>
-            );
-          })}
+        <View style={styles.podiumCard}>
+          <View style={styles.podium} onLayout={onPodiumLayout}>
+            {PODIUM.map(({ slot, rank, bar, barH }) => {
+              const e = top3[slot];
+              if (!e) return <View key={rank} style={styles.podiumSpacer} />;
+              return (
+                <Pressable
+                  key={rank}
+                  style={styles.podCol}
+                  onPress={() => router.push({ pathname: '/player', params: { id: e.id } })}>
+                  <View style={styles.podTrack}>
+                    <Avatar name={e.display_name} uri={e.avatar_url} size={avatarSize} />
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.podName}>
+                      {e.display_name}
+                    </ThemedText>
+                    <ThemedText type="cardTitle" numberOfLines={1}>
+                      {e.elo}
+                    </ThemedText>
+                    <View style={[styles.podBar, { height: barH, backgroundColor: bar }]}>
+                      <ThemedText type="metric" style={styles.podRank}>
+                        {rank}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       ) : null}
     </>
@@ -165,13 +237,17 @@ export default function RankingScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <FlatList
+          ref={listRef}
           data={restData}
           keyExtractor={(e) => e.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scroll}
-          ListHeaderComponent={header}
-          ItemSeparatorComponent={Separator}
+          ListHeaderComponent={<View onLayout={onHeaderLayout}>{header}</View>}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          getItemLayout={(_, index) => ({ length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index })}
           ListEmptyComponent={
             filtered.length === 0 ? (
               <ThemedText type="default" themeColor="textSecondary" style={styles.empty}>
@@ -190,16 +266,45 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three, paddingBottom: BottomTabInset + Spacing.five },
 
-  meLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.two },
-
-  filters: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.four, marginBottom: Spacing.two },
+  filtersCard: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    backgroundColor: Palette.white,
+    borderRadius: Radius.pill,
+    padding: Spacing.one,
+    marginTop: Spacing.three,
+  },
   pill: { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.pill, alignItems: 'center' },
   pillActive: { backgroundColor: Palette.ink2 },
   pillIdle: { backgroundColor: 'transparent' },
 
-  podium: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, marginTop: Spacing.three, marginBottom: Spacing.two },
-  podiumCell: { flex: 1, borderRadius: Radius.sm, padding: Spacing.three, justifyContent: 'space-between' },
-  podiumBody: { gap: Spacing.half, marginTop: Spacing.two },
+  // Carte « Tu es classé Ne » + bouton d'ancrage
+  meRow: { flexDirection: 'row', alignItems: 'stretch', gap: Spacing.two, marginTop: Spacing.three },
+  meCard: { flex: 1, justifyContent: 'center', backgroundColor: Palette.border, borderRadius: Radius.sm, paddingHorizontal: Spacing.four, paddingVertical: Spacing.three },
+  meArrow: { width: 64, borderRadius: Radius.sm, backgroundColor: Palette.onyx, alignItems: 'center', justifyContent: 'center' },
+
+  // Podium barres
+  podiumCard: {
+    backgroundColor: Palette.white,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.four,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.two,
+  },
+  podium: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two },
+  podCol: { flex: 1 },
+  podTrack: {
+    backgroundColor: Palette.border, // #E5E5E5 (background secondary) → se détache du fond de page
+    borderTopLeftRadius: Radius.pill, // dôme arrondi 999px
+    borderTopRightRadius: Radius.pill,
+    alignItems: 'center',
+    padding: Spacing.sm, // padding interne 8px
+    gap: Spacing.half,
+  },
+  podName: { marginTop: Spacing.one },
+  podBar: { alignSelf: 'stretch', marginTop: Spacing.two, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center' },
+  podRank: { color: Palette.white, fontSize: 28, lineHeight: 34 },
   podiumSpacer: { flex: 1 },
 
   separator: { height: Spacing.two },
@@ -217,4 +322,5 @@ const styles = StyleSheet.create({
   rowMine: { backgroundColor: Palette.lime },
   rank: { width: 22 },
   rowMain: { flex: 1 },
+  moveTag: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half },
 });

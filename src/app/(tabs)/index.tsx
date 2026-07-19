@@ -11,7 +11,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { type Href, router } from 'expo-router';
 import { memo, useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -42,6 +53,65 @@ function Separator() {
   return <View style={styles.separator} />;
 }
 
+const GALLERY_GAP = Spacing.sm; // espace entre 2 photos
+const GALLERY_PEEK = 28; // portion de la photo suivante visible → invite au swipe
+
+/**
+ * Galerie photo d'une séance : 1 photo = pleine largeur ; plusieurs = carrousel horizontal
+ * qui « snappe » sur chaque image (léger peek de la suivante) + pastilles de position.
+ * Snap cross-plateforme : `snapToInterval` sur natif, `pagingEnabled` (CSS scroll-snap) sur web.
+ */
+function PhotoGallery({ urls }: { urls: string[] }) {
+  const [w, setW] = useState(0);
+  const [active, setActive] = useState(0);
+
+  const onLayout = useCallback((e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width), []);
+
+  // Une seule photo : plein cadre, pas de carrousel.
+  if (urls.length === 1) {
+    return (
+      <View style={styles.photoFull}>
+        <Image source={{ uri: urls[0] }} style={styles.photoFullImg} contentFit="cover" transition={200} />
+      </View>
+    );
+  }
+
+  const itemW = w > 0 ? w - GALLERY_PEEK : 0;
+  const interval = itemW + GALLERY_GAP;
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (interval > 0) setActive(Math.round(e.nativeEvent.contentOffset.x / interval));
+  };
+
+  return (
+    <View onLayout={onLayout}>
+      {w > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          decelerationRate="fast"
+          snapToAlignment="start"
+          // Natif : snap par intervalle (respecte la largeur d'item → peek). Web : scroll-snap CSS.
+          snapToInterval={Platform.OS === 'web' ? undefined : interval}
+          pagingEnabled={Platform.OS === 'web'}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          contentContainerStyle={styles.galleryContent}>
+          {urls.map((u, i) => (
+            <View key={`${u}-${i}`} style={[styles.photoFull, { width: itemW }]}>
+              <Image source={{ uri: u }} style={styles.photoFullImg} contentFit="cover" transition={200} />
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
+      <View style={styles.dots}>
+        {urls.map((u, i) => (
+          <View key={`${u}-${i}`} style={[styles.dot, i === active && styles.dotActive]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 /** Carte d'une séance dans le feed. Mémoïsée : ne re-rend que si la séance change. */
 const SessionRow = memo(function SessionRow({
   item: s,
@@ -56,86 +126,71 @@ const SessionRow = memo(function SessionRow({
 }) {
   return (
     <Pressable style={styles.card} onPress={() => onOpenSession(s.id)}>
-      <View style={styles.cardRow}>
-        {/* Colonne gauche : contenu texte */}
-        <View style={styles.cardCol}>
-          <Pressable style={styles.cardHead} onPress={() => onOpenAuthor(s.author.id)}>
-            <Avatar name={s.author.name} size={36} uri={s.author.avatarUrl} color={Palette.purple} />
-            <View style={{ flex: 1 }}>
-              <ThemedText type="cardTitle" numberOfLines={1}>
-                {s.author.name}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textMuted">
-                {relativeDate(s.createdAt)}
-              </ThemedText>
-            </View>
-          </Pressable>
-
-          <View style={styles.cardBody}>
-            <ThemedText type="cardTitle" numberOfLines={2}>
-              {s.isSolo ? 'Séance solo' : 'Séance'}
-              {s.strokes.length ? ` · ${s.strokes[0]}` : ''}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-              {formatDuration(s.durationMin)}
-              {s.venueName ? ` · ${s.venueName}` : ''}
-              {s.feeling ? ` · ${s.feeling}` : ''}
-            </ThemedText>
-            {s.note ? (
-              <ThemedText type="default" numberOfLines={2} style={{ marginTop: Spacing.half }}>
-                {s.note}
-              </ThemedText>
-            ) : null}
-          </View>
-
-          {s.strokes.length ? (
-            <View style={styles.tagsRow}>
-              {s.strokes.slice(0, 3).map((st) => (
-                <View key={st} style={styles.tag}>
-                  <ThemedText type="small" themeColor="brand">
-                    {st}
-                  </ThemedText>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
-          <View style={styles.cardFoot}>
-            <Pressable style={styles.likeBtn} onPress={() => onToggleLike(s)} hitSlop={8}>
-              <Ionicons
-                name={s.liked ? 'heart' : 'heart-outline'}
-                size={20}
-                color={s.liked ? Palette.redInk : Palette.grey}
-              />
-              <ThemedText type="smallBold" themeColor={s.liked ? 'danger' : 'textSecondary'}>
-                {s.likeCount > 0 ? s.likeCount : "J'aime"}
-              </ThemedText>
-            </Pressable>
-            <Pressable style={styles.likeBtn} onPress={() => onOpenSession(s.id)} hitSlop={8}>
-              <Ionicons name="chatbubble-outline" size={19} color={Palette.grey} />
-              {s.commentCount > 0 ? (
-                <ThemedText type="smallBold" themeColor="textSecondary">
-                  {s.commentCount}
-                </ThemedText>
-              ) : null}
-            </Pressable>
-          </View>
+      {/* En-tête : auteur + date (aligné maquette) */}
+      <Pressable style={styles.cardHead} onPress={() => onOpenAuthor(s.author.id)}>
+        <Avatar name={s.author.name} size={36} uri={s.author.avatarUrl} color={Palette.purple} />
+        <View style={{ flex: 1 }}>
+          <ThemedText type="cardTitle" numberOfLines={1}>
+            {s.author.name}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textMuted">
+            {relativeDate(s.createdAt)}
+          </ThemedText>
         </View>
+      </Pressable>
 
-        {/* Colonne droite : photo (la 1re, + badge s'il y en a plusieurs) */}
-        {s.photoUrls.length ? (
-          <View style={styles.photoSide}>
-            <Image source={{ uri: s.photoUrls[0] }} style={styles.photoSideImg} contentFit="cover" transition={200} />
-            {s.photoUrls.length > 1 ? (
-              <View style={styles.photoCountBadge}>
-                <Ionicons name="images-outline" size={12} color={Palette.whitePP} />
-                <ThemedText type="smallBold" themeColor="onBrand">
-                  {s.photoUrls.length}
-                </ThemedText>
-              </View>
-            ) : null}
-          </View>
+      <View style={styles.cardBody}>
+        <ThemedText type="cardTitle" numberOfLines={2}>
+          {s.isSolo ? 'Séance solo' : 'Séance'}
+          {s.strokes.length ? ` · ${s.strokes[0]}` : ''}
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+          {formatDuration(s.durationMin)}
+          {s.venueName ? ` · ${s.venueName}` : ''}
+          {s.feeling ? ` · ${s.feeling}` : ''}
+        </ThemedText>
+        {s.note ? (
+          <ThemedText type="default" numberOfLines={2} style={{ marginTop: Spacing.half }}>
+            {s.note}
+          </ThemedText>
         ) : null}
+      </View>
+
+      {s.strokes.length ? (
+        <View style={styles.tagsRow}>
+          {s.strokes.slice(0, 3).map((st) => (
+            <View key={st} style={styles.tag}>
+              <ThemedText type="small" themeColor="brand">
+                {st}
+              </ThemedText>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Photos pleine largeur sous le contenu (maquette) : carrousel snap si plusieurs */}
+      {s.photoUrls.length ? <PhotoGallery urls={s.photoUrls} /> : null}
+
+      {/* Footer like/commentaire : gros boutons pilule (même config que l'écran Publication). */}
+      <View style={styles.cardFoot}>
+        <Pressable style={styles.footBtn} onPress={() => onToggleLike(s)} hitSlop={8}>
+          <Ionicons
+            name={s.liked ? 'heart' : 'heart-outline'}
+            size={20}
+            color={s.liked ? Palette.redInk : Palette.grey}
+          />
+          <ThemedText type="smallBold" themeColor={s.liked ? 'danger' : 'textSecondary'}>
+            {s.likeCount > 0 ? `${s.likeCount} ace${s.likeCount > 1 ? 's' : ''}` : 'Ace'}
+          </ThemedText>
+        </Pressable>
+        <Pressable style={styles.footBtn} onPress={() => onOpenSession(s.id)} hitSlop={8}>
+          <Ionicons name="chatbubble-outline" size={19} color={Palette.grey} />
+          {s.commentCount > 0 ? (
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              {s.commentCount}
+            </ThemedText>
+          ) : null}
+        </Pressable>
       </View>
     </Pressable>
   );
@@ -490,7 +545,8 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: Palette.white,
     borderRadius: Radius.sm,
-    padding: Spacing.sm,
+    padding: Spacing.md,
+    gap: Spacing.sm,
   },
   ffttCard: {
     flexDirection: 'row',
@@ -501,28 +557,18 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
   },
   resultPill: { borderRadius: Radius.pill, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
-  cardRow: { flexDirection: 'row', gap: Spacing.three },
-  cardCol: { flex: 1, gap: Spacing.two },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   cardBody: { gap: Spacing.half },
-  photoSide: { width: 132, alignSelf: 'stretch', minHeight: 132, borderRadius: Radius.sm, backgroundColor: Palette.whitePP, overflow: 'hidden' },
-  photoSideImg: { ...StyleSheet.absoluteFillObject },
-  photoCountBadge: {
-    position: 'absolute',
-    top: Spacing.one,
-    right: Spacing.one,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: Spacing.one,
-    paddingVertical: 2,
-    borderRadius: Radius.sm,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
+  photoFull: { width: '100%', aspectRatio: 16 / 10, borderRadius: Radius.xs, backgroundColor: Palette.whitePP, overflow: 'hidden' },
+  photoFullImg: { ...StyleSheet.absoluteFillObject },
+  galleryContent: { gap: GALLERY_GAP, paddingRight: GALLERY_PEEK },
+  dots: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.one, marginTop: Spacing.sm },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Palette.border },
+  dotActive: { backgroundColor: Palette.onyx, width: 18 },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm },
-  likeBtn: {
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.xs },
+  footBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',

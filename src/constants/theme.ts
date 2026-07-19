@@ -29,9 +29,14 @@ export const Palette = {
   blue: '#A5C6FF', // accent data - avatars, podium #2, chart
   purple: '#A8A5FF', // accent data - avatars, podium #3
   green: '#8CE566', // succès / victoire
+  greenInk: '#2E9E52', // hausse de classement (texte sur blanc)
   red: '#FF8C8C', // défaite / erreur (fond)
   redInk: '#CC1A1A', // défaite / erreur (texte)
   warning: '#F5B301', // Feedback/warning - avertissement / en attente
+  // Médailles podium (barres du Ranking) — couleurs dédiées, hors système neutre.
+  gold: '#F5C518', // #1
+  silver: '#8E8E8E', // #2
+  bronze: '#A0501A', // #3
 } as const;
 
 /**

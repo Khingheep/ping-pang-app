@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { type Href, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,11 +18,11 @@ import { fetchMatchFeedItem, type MatchFeedItem } from '@/lib/matches/feed';
 import {
   addMatchComment,
   fetchMatchComments,
-  fetchMatchLikers,
   likeMatch,
+  likeMatchComment,
   unlikeMatch,
+  unlikeMatchComment,
   type MatchComment,
-  type MatchLiker,
 } from '@/lib/matches/social';
 
 function relativeDate(iso: string): string {
@@ -42,7 +42,6 @@ export default function MatchDetailScreen() {
   const { session } = useAuth();
   const myId = session?.user?.id;
   const [item, setItem] = useState<MatchFeedItem | null>(null);
-  const [likers, setLikers] = useState<MatchLiker[]>([]);
   const [comments, setComments] = useState<MatchComment[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -51,15 +50,29 @@ export default function MatchDetailScreen() {
 
   const load = useCallback(() => {
     if (!id) return;
-    Promise.all([fetchMatchFeedItem(id, myId), fetchMatchLikers(id), fetchMatchComments(id)]).then(([it, lk, cm]) => {
+    Promise.all([fetchMatchFeedItem(id, myId), fetchMatchComments(id, myId)]).then(([it, cm]) => {
       setItem(it);
-      setLikers(lk);
       setComments(cm);
       setLoading(false);
     });
   }, [id, myId]);
 
   useEffect(load, [load]);
+
+  /** Ace optimiste sur un commentaire : maj immédiate, rollback si l'appel échoue. */
+  async function toggleCommentLike(c: MatchComment) {
+    if (!myId) return;
+    const liked = !c.liked;
+    setComments((prev) =>
+      prev.map((x) => (x.id === c.id ? { ...x, liked, likeCount: x.likeCount + (liked ? 1 : -1) } : x)),
+    );
+    try {
+      if (liked) await likeMatchComment(c.id, myId);
+      else await unlikeMatchComment(c.id, myId);
+    } catch {
+      setComments((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+    }
+  }
 
   async function toggleLike() {
     if (!myId || !item || !id) return;
@@ -68,7 +81,6 @@ export default function MatchDetailScreen() {
     try {
       if (liked) await likeMatch(id, myId);
       else await unlikeMatch(id, myId);
-      setLikers(await fetchMatchLikers(id));
     } catch {
       setItem({ ...item });
     }
@@ -81,7 +93,7 @@ export default function MatchDetailScreen() {
     setSending(true);
     try {
       await addMatchComment(id, myId, body);
-      setComments(await fetchMatchComments(id));
+      setComments(await fetchMatchComments(id, myId));
       setItem((prev) => (prev ? { ...prev, commentCount: prev.commentCount + 1 } : prev));
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     } catch {
@@ -133,22 +145,16 @@ export default function MatchDetailScreen() {
                 onLike={toggleLike}
               />
 
-              {/* Qui a aimé */}
-              {likers.length ? (
-                <View style={styles.section}>
-                  <ThemedText type="sectionTitle" themeColor="textSecondary">
-                    Aimé par · {likers.length}
+              {/* Aces → ouvre la liste des joueurs qui ont mis un ace */}
+              {item.likeCount > 0 ? (
+                <Pressable
+                  style={styles.acesLink}
+                  onPress={() => router.push(`/aces?kind=match&id=${id}` as Href)}>
+                  <ThemedText type="smallBold" themeColor="textSecondary">
+                    {item.likeCount} ace{item.likeCount > 1 ? 's' : ''}
                   </ThemedText>
-                  {likers.map((l) => (
-                    <Pressable key={l.id} style={styles.personRow} onPress={() => openProfile(l.id)}>
-                      <Avatar name={l.name} size={36} uri={l.avatarUrl} color={Palette.purple} />
-                      <ThemedText type="cardTitle" numberOfLines={1} style={{ flex: 1 }}>
-                        {l.name}
-                      </ThemedText>
-                      <Ionicons name="heart" size={16} color={Palette.redInk} />
-                    </Pressable>
-                  ))}
-                </View>
+                  <Ionicons name="chevron-forward" size={16} color={Palette.grey} />
+                </Pressable>
               ) : null}
 
               {/* Commentaires */}
@@ -177,6 +183,15 @@ export default function MatchDetailScreen() {
                         </View>
                         <ThemedText type="default">{c.body}</ThemedText>
                       </View>
+                      {/* Ace du commentaire (pouce + compteur) */}
+                      <Pressable style={styles.commentAce} onPress={() => toggleCommentLike(c)} hitSlop={8}>
+                        <Ionicons name={c.liked ? 'heart' : 'heart-outline'} size={18} color={c.liked ? Palette.redInk : Palette.grey} />
+                        {c.likeCount > 0 ? (
+                          <ThemedText type="small" themeColor={c.liked ? 'danger' : 'textMuted'}>
+                            {c.likeCount}
+                          </ThemedText>
+                        ) : null}
+                      </Pressable>
                     </View>
                   ))
                 )}
@@ -227,9 +242,20 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     gap: Spacing.two,
   },
-  personRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  acesLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+  },
 
   commentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
+  commentAce: { alignItems: 'center', justifyContent: 'flex-start', gap: 2, paddingTop: Spacing.one, minWidth: 24 },
   commentBubble: {
     flex: 1,
     backgroundColor: Palette.whitePP,

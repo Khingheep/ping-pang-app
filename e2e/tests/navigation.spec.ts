@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
 // pas de maniere fiable en assertion) et on prouve la navigation par le contenu affiche.
 const TABS: { label: string; assert: (p: import('@playwright/test').Page) => Promise<unknown> }[] = [
   { label: 'Défis', assert: (p) => expect(p.getByText('Défis', { exact: true })).toBeVisible() },
-  { label: 'Ranking', assert: (p) => expect(p.getByText('Ranking Mondial')).toBeVisible() },
+  { label: 'Ranking', assert: (p) => expect(p.getByText('Ranking', { exact: true }).first()).toBeVisible() },
   { label: 'Accueil', assert: (p) => expect(p.getByText('E2E Runner').first()).toBeVisible() },
   { label: 'Map', assert: (p) => expect(p.getByText('Où jouer ?')).toBeVisible() },
   { label: 'Train', assert: (p) => expect(p.getByTestId('train-hero')).toBeVisible() },
@@ -29,7 +29,7 @@ test('TC-02 la tab bar navigue entre les 5 onglets', async ({ page }) => {
 // Contenu unique et visible de chaque ecran (charge en direct par son URL).
 const SCREENS: { path: string; expect: (page: import('@playwright/test').Page) => Promise<void> }[] = [
   { path: '/jouer', expect: async (p) => void (await expect(p.getByText('Défis', { exact: true })).toBeVisible()) },
-  { path: '/classement', expect: async (p) => void (await expect(p.getByText('Ranking Mondial')).toBeVisible()) },
+  { path: '/classement', expect: async (p) => void (await expect(p.getByText('Ranking', { exact: true }).first()).toBeVisible()) },
   { path: '/carte', expect: async (p) => void (await expect(p.getByText('Où jouer ?')).toBeVisible()) },
   { path: '/train', expect: async (p) => void (await expect(p.getByTestId('train-hero')).toBeVisible()) },
 ];

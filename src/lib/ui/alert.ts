@@ -52,8 +52,9 @@ export function confirm(opts: {
 
 /**
  * Choix parmi plusieurs actions (style action sheet). Natif : `Alert.alert` multi-boutons.
- * Web : pas d'action sheet natif → `window.confirm` gère 2 options (OK = 1re, Annuler = 2e).
- * Pour 3+ options sur le web, branche plutôt l'UI ailleurs (le web n'est pas couvert).
+ * Web : pas d'action sheet natif → `window.confirm` (binaire) ne gère qu'UNE option (OK = 1re) ;
+ * ANNULER ne déclenche JAMAIS d'action. Pour présenter 2+ options sur le web, utilise plutôt
+ * une vraie feuille en composant (ex. SwipeSheet) — cf. le signalement dans player.tsx.
  */
 export function choose(opts: {
   title: string;
@@ -66,7 +67,7 @@ export function choose(opts: {
   if (Platform.OS === 'web') {
     if (typeof window === 'undefined') return;
     const ok = window.confirm([title, message].filter(Boolean).join('\n\n'));
-    (ok ? options[0] : options[1])?.onPress?.();
+    if (ok) options[0]?.onPress?.(); // Annuler = ne rien faire (ne surtout pas déclencher option[1])
     return;
   }
 

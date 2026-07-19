@@ -5,7 +5,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { router, useLocalSearchParams } from 'expo-router';
+import { type Href, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,13 +18,13 @@ import {
   addSessionComment,
   fetchSessionComments,
   fetchSessionItem,
-  fetchSessionLikers,
   formatDuration,
   likeSession,
+  likeSessionComment,
   unlikeSession,
+  unlikeSessionComment,
   type SessionComment,
   type SessionFeedItem,
-  type SessionLiker,
 } from '@/lib/training/sessions';
 
 function relativeDate(iso: string): string {
@@ -79,7 +79,6 @@ export default function SessionDetailScreen() {
   const { session } = useAuth();
   const myId = session?.user?.id;
   const [item, setItem] = useState<SessionFeedItem | null>(null);
-  const [likers, setLikers] = useState<SessionLiker[]>([]);
   const [comments, setComments] = useState<SessionComment[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -88,15 +87,27 @@ export default function SessionDetailScreen() {
 
   const load = useCallback(() => {
     if (!id) return;
-    Promise.all([fetchSessionItem(id, myId), fetchSessionLikers(id), fetchSessionComments(id)]).then(
-      ([it, lk, cm]) => {
-        setItem(it);
-        setLikers(lk);
-        setComments(cm);
-        setLoading(false);
-      },
-    );
+    Promise.all([fetchSessionItem(id, myId), fetchSessionComments(id, myId)]).then(([it, cm]) => {
+      setItem(it);
+      setComments(cm);
+      setLoading(false);
+    });
   }, [id, myId]);
+
+  /** Ace optimiste sur un commentaire : maj immédiate de l'état, rollback si l'appel échoue. */
+  async function toggleCommentLike(c: SessionComment) {
+    if (!myId) return;
+    const liked = !c.liked;
+    setComments((prev) =>
+      prev.map((x) => (x.id === c.id ? { ...x, liked, likeCount: x.likeCount + (liked ? 1 : -1) } : x)),
+    );
+    try {
+      if (liked) await likeSessionComment(c.id, myId);
+      else await unlikeSessionComment(c.id, myId);
+    } catch {
+      setComments((prev) => prev.map((x) => (x.id === c.id ? c : x))); // rollback
+    }
+  }
 
   useEffect(load, [load]);
 
@@ -107,7 +118,6 @@ export default function SessionDetailScreen() {
     try {
       if (liked) await likeSession(id, myId);
       else await unlikeSession(id, myId);
-      setLikers(await fetchSessionLikers(id));
     } catch {
       setItem({ ...item });
     }
@@ -120,7 +130,7 @@ export default function SessionDetailScreen() {
     setSending(true);
     try {
       await addSessionComment(id, myId, body);
-      setComments(await fetchSessionComments(id));
+      setComments(await fetchSessionComments(id, myId));
       setItem((prev) => (prev ? { ...prev, commentCount: prev.commentCount + 1 } : prev));
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     } catch {
@@ -199,39 +209,37 @@ export default function SessionDetailScreen() {
 
                 {item.photoUrls.length ? <PhotoGallery uris={item.photoUrls} /> : null}
 
-                <View style={styles.cardFoot}>
-                  <Pressable style={styles.likeBtn} onPress={toggleLike} hitSlop={8}>
-                    <Ionicons name={item.liked ? 'heart' : 'heart-outline'} size={22} color={item.liked ? Palette.redInk : Palette.grey} />
-                    <ThemedText type="smallBold" themeColor={item.liked ? 'danger' : 'textSecondary'}>
-                      {item.likeCount > 0 ? item.likeCount : "J'aime"}
+                {/* Compteurs : « N aces » cliquable (ouvre la liste des likers) + « N commentaires ». */}
+                <View style={styles.countsRow}>
+                  <Pressable
+                    onPress={() => item.likeCount > 0 && router.push(`/aces?kind=session&id=${id}` as Href)}
+                    disabled={item.likeCount === 0}
+                    hitSlop={8}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {item.likeCount} ace{item.likeCount > 1 ? 's' : ''}
                     </ThemedText>
                   </Pressable>
-                  <View style={styles.commentMeta}>
-                    <Ionicons name="chatbubble-outline" size={20} color={Palette.grey} />
-                    <ThemedText type="smallBold" themeColor="textSecondary">
-                      {item.commentCount}
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {item.commentCount} commentaire{item.commentCount > 1 ? 's' : ''}
+                  </ThemedText>
+                </View>
+
+                {/* Gros boutons pilule. Ace = like ; Commenter → va à la saisie en bas. */}
+                <View style={styles.cardFoot}>
+                  <Pressable style={styles.footBtn} onPress={toggleLike} hitSlop={8}>
+                    <Ionicons name={item.liked ? 'heart' : 'heart-outline'} size={20} color={item.liked ? Palette.redInk : Palette.grey} />
+                    <ThemedText type="smallBold" themeColor={item.liked ? 'danger' : 'textSecondary'}>
+                      Ace
                     </ThemedText>
-                  </View>
+                  </Pressable>
+                  <Pressable style={styles.footBtn} onPress={() => scrollRef.current?.scrollToEnd({ animated: true })} hitSlop={8}>
+                    <Ionicons name="chatbubble-outline" size={19} color={Palette.grey} />
+                    <ThemedText type="smallBold" themeColor="textSecondary">
+                      Commenter
+                    </ThemedText>
+                  </Pressable>
                 </View>
               </View>
-
-              {/* Qui a aimé */}
-              {likers.length ? (
-                <View style={styles.section}>
-                  <ThemedText type="sectionTitle" themeColor="textSecondary">
-                    Aimé par · {likers.length}
-                  </ThemedText>
-                  {likers.map((l) => (
-                    <Pressable key={l.id} style={styles.personRow} onPress={() => openProfile(l.id)}>
-                      <Avatar name={l.name} size={36} uri={l.avatarUrl} color={Palette.purple} />
-                      <ThemedText type="cardTitle" numberOfLines={1} style={{ flex: 1 }}>
-                        {l.name}
-                      </ThemedText>
-                      <Ionicons name="heart" size={16} color={Palette.redInk} />
-                    </Pressable>
-                  ))}
-                </View>
-              ) : null}
 
               {/* Commentaires */}
               <View style={styles.section}>
@@ -259,6 +267,15 @@ export default function SessionDetailScreen() {
                         </View>
                         <ThemedText type="default">{c.body}</ThemedText>
                       </View>
+                      {/* Ace du commentaire (pouce + compteur) */}
+                      <Pressable testID="comment-ace" style={styles.commentAce} onPress={() => toggleCommentLike(c)} hitSlop={8}>
+                        <Ionicons name={c.liked ? 'heart' : 'heart-outline'} size={18} color={c.liked ? Palette.redInk : Palette.grey} />
+                        {c.likeCount > 0 ? (
+                          <ThemedText type="small" themeColor={c.liked ? 'danger' : 'textMuted'}>
+                            {c.likeCount}
+                          </ThemedText>
+                        ) : null}
+                      </Pressable>
                     </View>
                   ))
                 )}
@@ -277,7 +294,7 @@ export default function SessionDetailScreen() {
                 onSubmitEditing={send}
                 multiline
               />
-              <Pressable style={[styles.sendBtn, !text.trim() && styles.sendBtnOff]} onPress={send} disabled={!text.trim() || sending}>
+              <Pressable testID="comment-send" style={[styles.sendBtn, !text.trim() && styles.sendBtnOff]} onPress={send} disabled={!text.trim() || sending}>
                 {sending ? <ActivityIndicator color={Palette.whitePP} size="small" /> : <Ionicons name="arrow-up" size={22} color={Palette.whitePP} />}
               </Pressable>
             </View>
@@ -317,9 +334,17 @@ const styles = StyleSheet.create({
   dotActive: { backgroundColor: Palette.onyx, width: 18 },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
   tag: { backgroundColor: Palette.whitePP, borderRadius: Radius.pill, paddingHorizontal: Spacing.two, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.four, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border, paddingTop: Spacing.two },
-  likeBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
-  commentMeta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.one },
+  footBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    backgroundColor: Palette.whitePP,
+    borderRadius: Radius.sm,
+    paddingVertical: 10,
+  },
 
   section: {
     backgroundColor: Palette.white,
@@ -329,9 +354,10 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     gap: Spacing.two,
   },
-  personRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  countsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 
   commentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
+  commentAce: { alignItems: 'center', justifyContent: 'flex-start', gap: 2, paddingTop: Spacing.one, minWidth: 24 },
   commentBubble: {
     flex: 1,
     backgroundColor: Palette.whitePP,

@@ -195,15 +195,17 @@ export type SessionFeedItem = {
   commentCount: number;
 };
 
-/** Un joueur qui a aimé une séance (pour l'écran « Aimé par »). */
-export type SessionLiker = { id: string; name: string; avatarUrl: string | null; createdAt: string };
+/** Un joueur qui a aimé une séance (pour l'écran « Aces »). */
+export type SessionLiker = { id: string; name: string; avatarUrl: string | null; elo: number; createdAt: string };
 
-/** Un commentaire sur une séance. */
+/** Un commentaire sur une séance (+ aces = likes du commentaire). */
 export type SessionComment = {
   id: string;
   author: { id: string; name: string; avatarUrl: string | null };
   body: string;
   createdAt: string;
+  likeCount: number;
+  liked: boolean;
 };
 
 type FeedRow = {
@@ -313,22 +315,26 @@ export async function fetchSessionItem(sessionId: string, myId: string | undefin
 export async function fetchSessionLikers(sessionId: string): Promise<SessionLiker[]> {
   const { data } = await supabase
     .from('session_likes')
-    .select('created_at, players!session_likes_player_id_fkey(id, display_name, avatar_url)')
+    .select('created_at, players!session_likes_player_id_fkey(id, display_name, avatar_url, elo)')
     .eq('session_id', sessionId)
     .order('created_at', { ascending: false });
-  type LikerRow = { created_at: string; players: { id: string; display_name: string; avatar_url: string | null } | null };
+  type LikerRow = { created_at: string; players: { id: string; display_name: string; avatar_url: string | null; elo: number | null } | null };
   return ((data as unknown as LikerRow[] | null) ?? [])
     .filter((r) => r.players)
     .map((r) => ({
       id: r.players!.id,
       name: r.players!.display_name ?? 'Joueur',
       avatarUrl: r.players!.avatar_url ?? null,
+      elo: r.players!.elo ?? 0,
       createdAt: r.created_at,
     }));
 }
 
-/** Commentaires d'une séance (les plus anciens d'abord, ordre de lecture). */
-export async function fetchSessionComments(sessionId: string): Promise<SessionComment[]> {
+/**
+ * Commentaires d'une séance (les plus anciens d'abord, ordre de lecture), avec le nombre d'aces
+ * de chaque commentaire et mon état (myId). Un 2e aller-retour agrège session_comment_likes.
+ */
+export async function fetchSessionComments(sessionId: string, myId?: string): Promise<SessionComment[]> {
   const { data } = await supabase
     .from('session_comments')
     .select('id, body, created_at, players!session_comments_player_id_fkey(id, display_name, avatar_url)')
@@ -340,11 +346,27 @@ export async function fetchSessionComments(sessionId: string): Promise<SessionCo
     created_at: string;
     players: { id: string; display_name: string; avatar_url: string | null } | null;
   };
-  return ((data as unknown as CommentRow[] | null) ?? []).map((r) => ({
+  const rows = (data as unknown as CommentRow[] | null) ?? [];
+  const ids = rows.map((r) => r.id);
+
+  // Aces des commentaires (compteur + mon like) en un seul appel.
+  const counts = new Map<string, number>();
+  const mine = new Set<string>();
+  if (ids.length) {
+    const { data: likeData } = await supabase.from('session_comment_likes').select('comment_id, player_id').in('comment_id', ids);
+    for (const l of (likeData as { comment_id: string; player_id: string }[] | null) ?? []) {
+      counts.set(l.comment_id, (counts.get(l.comment_id) ?? 0) + 1);
+      if (myId && l.player_id === myId) mine.add(l.comment_id);
+    }
+  }
+
+  return rows.map((r) => ({
     id: r.id,
     author: { id: r.players?.id ?? '', name: r.players?.display_name ?? 'Joueur', avatarUrl: r.players?.avatar_url ?? null },
     body: r.body,
     createdAt: r.created_at,
+    likeCount: counts.get(r.id) ?? 0,
+    liked: mine.has(r.id),
   }));
 }
 
@@ -352,6 +374,17 @@ export async function addSessionComment(sessionId: string, playerId: string, bod
   const { error } = await supabase
     .from('session_comments')
     .insert({ session_id: sessionId, player_id: playerId, body: body.trim() });
+  if (error) throw error;
+}
+
+/** Ace (like) / retrait d'ace sur un commentaire de séance. Idempotent à l'insert (23505). */
+export async function likeSessionComment(commentId: string, playerId: string): Promise<void> {
+  const { error } = await supabase.from('session_comment_likes').insert({ comment_id: commentId, player_id: playerId });
+  if (error && error.code !== '23505') throw error;
+}
+
+export async function unlikeSessionComment(commentId: string, playerId: string): Promise<void> {
+  const { error } = await supabase.from('session_comment_likes').delete().eq('comment_id', commentId).eq('player_id', playerId);
   if (error) throw error;
 }
 

@@ -6,6 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
+import { SwipeSheet } from '@/components/swipe-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -23,7 +24,14 @@ import {
 } from '@/lib/social/friends';
 import { reportPlayer } from '@/lib/players/moderation';
 import { formatDuration, useLastTrainingSession, useTrainingStats } from '@/lib/training/sessions';
-import { choose, notify } from '@/lib/ui/alert';
+import { notify } from '@/lib/ui/alert';
+
+/** Motifs de signalement (feuille). `destructive` = accent rouge. */
+const REPORT_REASONS: { label: string; reason: string; destructive?: boolean }[] = [
+  { label: 'Triche / faux score', reason: 'Triche / faux score' },
+  { label: 'Usurpation d’identité', reason: 'Usurpation d’identité (faux compte)', destructive: true },
+  { label: 'Autre comportement', reason: 'Comportement inapproprié' },
+];
 
 const FRIEND_CFG: Record<FriendStatus, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
   none: { icon: 'person-add-outline', label: 'Ajouter en ami' },
@@ -47,6 +55,7 @@ export default function PlayerScreen() {
   const myId = session?.user?.id;
   const qc = useQueryClient();
   const [friendBusy, setFriendBusy] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   // L'écran sert aussi à voir SON propre profil : on ne charge les sections « autre joueur »
   // que si l'id consulté n'est pas le mien.
@@ -93,26 +102,20 @@ export default function PlayerScreen() {
     }
   }
 
-  /** Signalement pour fraude (Paul 07/07) : motif choisi → ligne player_reports, visible admin. */
-  function onReport() {
+  /**
+   * Signalement pour fraude (Paul 07/07) : motif choisi dans une feuille (SwipeSheet) → ligne
+   * player_reports, visible admin. Feuille plutôt que `choose` : sur le web, `window.confirm`
+   * envoyait le signalement même en cliquant « Annuler » (bug designer 16/07).
+   */
+  async function sendReport(reason: string) {
     if (!myId || !p) return;
-    const send = async (reason: string) => {
-      try {
-        await reportPlayer({ reporterId: myId, reportedId: p.id, reason });
-        notify('Signalement envoyé', 'Un admin va y jeter un œil. Merci !');
-      } catch (e) {
-        notify('Signalement', e instanceof Error ? e.message : 'Réessaie plus tard.');
-      }
-    };
-    choose({
-      title: `Signaler ${p.display_name} ?`,
-      message: 'Le signalement remonte aux admins Ping Pang Paris.',
-      options: [
-        { text: 'Triche / faux score', onPress: () => void send('Triche / faux score') },
-        { text: 'Usurpation d’identité', onPress: () => void send('Usurpation d’identité (faux compte)'), destructive: true },
-        { text: 'Autre comportement', onPress: () => void send('Comportement inapproprié') },
-      ],
-    });
+    setReportOpen(false);
+    try {
+      await reportPlayer({ reporterId: myId, reportedId: p.id, reason });
+      notify('Signalement envoyé', 'Un admin va y jeter un œil. Merci !');
+    } catch (e) {
+      notify('Signalement', e instanceof Error ? e.message : 'Réessaie plus tard.');
+    }
   }
 
   const isMe = id === session?.user?.id;
@@ -225,7 +228,7 @@ export default function PlayerScreen() {
                 <ThemedText type="smallBold">Message</ThemedText>
               </Pressable>
 
-              <Pressable style={styles.reportBtn} onPress={onReport} hitSlop={8}>
+              <Pressable style={styles.reportBtn} onPress={() => setReportOpen(true)} hitSlop={8}>
                 <Ionicons name="flag-outline" size={14} color={Palette.grey} />
                 <ThemedText type="small" themeColor="textSecondary">
                   Signaler ce joueur
@@ -350,6 +353,26 @@ export default function PlayerScreen() {
           ) : null}
         </ScrollView>
       </SafeAreaView>
+
+      {/* Feuille de signalement (web + natif) : « Annuler » n'envoie RIEN. */}
+      <SwipeSheet visible={reportOpen} onClose={() => setReportOpen(false)} style={styles.reportSheet}>
+        <ThemedText type="cardTitle">Signaler {p?.display_name} ?</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary" style={styles.reportSheetSub}>
+          Le signalement remonte aux admins Ping Pang Paris.
+        </ThemedText>
+        {REPORT_REASONS.map((r) => (
+          <Pressable key={r.reason} style={styles.reportOption} onPress={() => sendReport(r.reason)}>
+            <ThemedText type="smallBold" themeColor={r.destructive ? 'danger' : 'text'}>
+              {r.label}
+            </ThemedText>
+          </Pressable>
+        ))}
+        <Pressable style={[styles.reportOption, styles.reportCancel]} onPress={() => setReportOpen(false)}>
+          <ThemedText type="smallBold" themeColor="textSecondary">
+            Annuler
+          </ThemedText>
+        </Pressable>
+      </SwipeSheet>
     </View>
   );
 }
@@ -429,6 +452,15 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     alignSelf: 'center',
   },
+  reportSheet: { paddingHorizontal: Spacing.four, gap: Spacing.two },
+  reportSheetSub: { marginBottom: Spacing.two },
+  reportOption: {
+    backgroundColor: Palette.white,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+  },
+  reportCancel: { backgroundColor: 'transparent', marginTop: Spacing.one },
   h2hCard: {
     marginTop: Spacing.two,
     backgroundColor: Palette.white,
