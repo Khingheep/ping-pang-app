@@ -13,14 +13,11 @@ import { useAuth } from '@/lib/auth/auth-provider';
 import { updateWeeklyGoal, useMyProfile } from '@/lib/players/profile';
 import { notify } from '@/lib/ui/alert';
 import {
-  fetchSessionTemplates,
   fetchTrainingSessions,
   fetchTrainingStats,
   formatDuration,
   formatHours,
-  partnersLabel,
   type ActivityPeriod,
-  type SessionTemplate,
   type TrainingSession,
   type TrainingStats,
 } from '@/lib/training/sessions';
@@ -40,7 +37,6 @@ export default function TrainScreen() {
   const profileQ = useMyProfile(myId);
   const [stats, setStats] = useState<TrainingStats | null>(null);
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
-  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [period, setPeriod] = useState<ActivityPeriod>('week');
 
   // Objectif hebdo configurable (champ profil ; null = défaut app 3h).
@@ -73,7 +69,6 @@ export default function TrainScreen() {
     if (id) {
       fetchTrainingStats(id).then(setStats);
       fetchTrainingSessions(id, 5).then(setSessions);
-      fetchSessionTemplates(id).then(setTemplates).catch(() => {});
     }
   }, [session?.user?.id]);
 
@@ -133,48 +128,9 @@ export default function TrainScreen() {
           {/* CTA principal */}
           <Pressable style={styles.logBtn} onPress={() => router.push('/new-training')}>
             <ThemedText type="cardTitle" style={styles.logBtnTxt}>
-              🏓  J&apos;ai joué
+              🏓  Noter une séance
             </ThemedText>
           </Pressable>
-
-          {/* Reprendre une séance récente */}
-          {templates.length > 0 ? (
-            <>
-              <ThemedText type="sectionTitle" themeColor="textSecondary" style={styles.section}>
-                Reprendre une séance
-              </ThemedText>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.tplRow}
-                style={styles.tplScroll}>
-                {templates.map((t) => {
-                  const partnerLabel = t.isSolo ? 'Solo' : partnersLabel(t) ?? t.partnerLevel ?? null;
-                  return (
-                    <Pressable
-                      key={t.id}
-                      style={styles.tplCard}
-                      onPress={() => router.push({ pathname: '/new-training', params: { template: t.id } })}>
-                      <View style={styles.tplHead}>
-                        <ThemedText type="cardTitle" themeColor="brand">
-                          {formatDuration(t.durationMin)}
-                        </ThemedText>
-                        <Ionicons name="repeat" size={16} color={Palette.onyx} />
-                      </View>
-                      <ThemedText type="small" numberOfLines={2}>
-                        {t.strokes.length ? t.strokes.join(', ') : 'Séance'}
-                      </ThemedText>
-                      {partnerLabel || t.venueName ? (
-                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                          {[partnerLabel, t.venueName].filter(Boolean).join(' · ')}
-                        </ThemedText>
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </>
-          ) : null}
 
           {/* Tuiles « cette année » */}
           {stats ? (
@@ -427,17 +383,6 @@ const styles = StyleSheet.create({
   // lineHeight explicite (même piège que goalValue) : sinon les chiffres des tuiles
   // heritent du lineHeight 20 du type « default » et sont coupes.
   tileNum: { fontFamily: 'OpenSauceOne-Bold', fontSize: 22, lineHeight: 28, color: Palette.onyx },
-
-  tplScroll: { marginTop: 0 },
-  tplRow: { gap: Spacing.two, paddingRight: Spacing.four },
-  tplCard: {
-    width: 168,
-    gap: Spacing.one,
-    backgroundColor: Palette.white,
-    borderRadius: Radius.sm,
-    padding: Spacing.three,
-  },
-  tplHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 
   section: { marginTop: Spacing.five, marginBottom: Spacing.two },
   activityHead: {
