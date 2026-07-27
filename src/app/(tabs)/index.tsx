@@ -545,7 +545,8 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: Palette.white,
     borderRadius: Radius.sm,
-    padding: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     gap: Spacing.sm,
   },
   ffttCard: {
