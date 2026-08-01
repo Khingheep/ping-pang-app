@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 
 import { Avatar } from '@/components/avatar';
+import { RankingExplainer } from '@/components/ranking-explainer';
 import { ThemedText } from '@/components/themed-text';
 import { BottomTabInset, Palette, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth/auth-provider';
@@ -230,6 +231,7 @@ export default function RankingScreen() {
           </View>
         </View>
       ) : null}
+      <RankingExplainer />
     </>
   );
 
