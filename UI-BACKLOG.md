@@ -31,17 +31,17 @@ Converti du call fondateur. Priorisé. Réfs aux fichiers réels.
 
 ## P1 — importantes V1
 
-### 4. Grille d'explication du classement
-> « une grille : points, différences de points, victoires/défaites, accessible quand tu fais un match, pour que les gens comprennent. »
-- Nouveau composant explicatif (additif, faible risque) sur `(tabs)/classement.tsx` + accessible depuis l'écran de match.
+### 4. Grille d'explication du classement — ✅ FAIT 01/08
+> « une grille : points, différences de points, victoires/défaites… »
+- ✅ Composant `RankingExplainer` (repliable) branché en tête du classement. Réutilisable sur l'écran de match (reste à l'y ajouter si voulu).
 
 ### 5. Filtres du feed (Accueil)
 > feed actuel « super bien ». Ajouter filtres **Tout le monde / Amis / Pays**.
 - Réf : `src/app/(tabs)/index.tsx`.
 
-### 6. Écrans d'erreur / 404 / retours bug
-> « très très important… gérer les bugs, récupérer les retours utilisateurs. Travail de la V1. »
-- États vides + écran 404 + un canal de feedback in-app.
+### 6. Écrans d'erreur / 404 / retours bug — ✅ 404 FAIT 01/08
+> « très très important… gérer les bugs, récupérer les retours utilisateurs. »
+- ✅ Écran 404 propre (`src/app/+not-found.tsx`). RESTE : états vides homogènes + canal de feedback bug in-app.
 
 ### 7. Onboarding — étape « ajouter des amis »
 > après les 5 questions + choix clubs : proposer d'**ajouter des amis** (gagne des utilisateurs). FFTT multi-noms → liste (déjà fait).
