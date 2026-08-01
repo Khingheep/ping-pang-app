@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { analytics, useAnalyticsIdentify, useScreenTracking } from '@/lib/analytics';
 import { Palette } from '@/constants/theme';
 import { AuthProvider, isSupabaseConfigured, useAuth } from '@/lib/auth/auth-provider';
 import { queryClient } from '@/lib/query/client';
@@ -20,6 +21,14 @@ function RootNavigator() {
   const router = useRouter();
 
   usePushNavigation();
+
+  // Analytics : identité (login/logout) + screen views auto. No-op tant que PostHog
+  // n'est pas branché (cf. src/lib/analytics/README.md).
+  useAnalyticsIdentify();
+  useScreenTracking();
+  useEffect(() => {
+    analytics.track('app_opened');
+  }, []);
 
   useEffect(() => {
     if (loading) return;
