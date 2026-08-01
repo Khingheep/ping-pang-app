@@ -64,6 +64,23 @@ analytics.track('onboarding_completed');
 
 C'est tout : aucun call-site à changer, tous les events déjà émis partent vers PostHog.
 
+## Consentement RGPD (opt-in strict)
+
+`analytics.track/screen/identify` sont **no-op tant que l'utilisateur n'a pas accepté** — rien
+ne part vers PostHog sans consentement (cf. `consent.ts`). État persisté dans AsyncStorage,
+hydraté au boot (`loadAnalyticsConsent()`, déjà branché dans `_layout`).
+
+Pour la bannière/écran de consentement :
+```tsx
+import { useAnalyticsConsent } from '@/lib/analytics';
+
+const [consent, setConsent] = useAnalyticsConsent(); // 'unset' | 'granted' | 'denied'
+// <Button title="Accepter" onPress={() => setConsent(true)} />
+// <Button title="Refuser"  onPress={() => setConsent(false)} />
+```
+Tant que `consent === 'unset'`, montrer la bannière (ex. après l'onboarding). L'app reste
+100% fonctionnelle sans consentement — seule la mesure d'audience est désactivée.
+
 ## Feature flags
 
 Une fois PostHog branché, ajouter un helper `flags.ts` autour de `posthog.getFeatureFlag(...)`

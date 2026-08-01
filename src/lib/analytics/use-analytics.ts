@@ -1,9 +1,15 @@
 import { usePathname } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '@/lib/auth/auth-provider';
 
 import { analytics } from './analytics';
+import {
+  getAnalyticsConsent,
+  setAnalyticsConsent,
+  subscribeAnalyticsConsent,
+  type AnalyticsConsent,
+} from './consent';
 
 /**
  * Synchronise l'identité Supabase → analytics :
@@ -41,4 +47,19 @@ export function useScreenTracking(): void {
     prev.current = pathname;
     analytics.screen(pathname);
   }, [pathname]);
+}
+
+/**
+ * État + setter du consentement analytics, pour une bannière/écran de consentement (RGPD).
+ * `const [consent, setConsent] = useAnalyticsConsent();` puis `setConsent(true|false)`.
+ */
+export function useAnalyticsConsent(): [AnalyticsConsent, (granted: boolean) => void] {
+  const [c, setC] = useState<AnalyticsConsent>(getAnalyticsConsent());
+  useEffect(() => subscribeAnalyticsConsent(setC), []);
+  return [
+    c,
+    (granted: boolean) => {
+      void setAnalyticsConsent(granted);
+    },
+  ];
 }

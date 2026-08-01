@@ -1,3 +1,4 @@
+import { hasAnalyticsConsent } from './consent';
 import type { AnalyticsEventMap, AnalyticsEventName } from './events';
 
 /**
@@ -52,20 +53,23 @@ type TrackArgs<E extends AnalyticsEventName> = AnalyticsEventMap[E] extends unde
   : [props: AnalyticsEventMap[E]];
 
 export const analytics = {
-  /** Émet un event typé. `analytics.track('paywall_viewed', { source: 'profil' })`. */
+  /** Émet un event typé. No-op tant que le consentement RGPD n'est pas donné. */
   track<E extends AnalyticsEventName>(event: E, ...args: TrackArgs<E>): void {
+    if (!hasAnalyticsConsent()) return;
     sink.track(event, (args[0] as Record<string, unknown> | undefined) ?? undefined);
   },
-  /** Relie les events à un joueur (au login). `distinctId` = id Supabase. */
+  /** Relie les events à un joueur (au login). `distinctId` = id Supabase. No-op sans consentement. */
   identify(distinctId: string, traits?: Record<string, unknown>): void {
+    if (!hasAnalyticsConsent()) return;
     sink.identify(distinctId, traits);
   },
-  /** Dissocie l'identité (au logout) — évite d'attribuer les events au compte suivant. */
+  /** Dissocie l'identité (au logout). Toujours exécuté (nettoyage), même sans consentement. */
   reset(): void {
     sink.reset();
   },
-  /** Screen view (branché automatiquement sur expo-router, cf. useScreenTracking). */
+  /** Screen view (branché sur expo-router). No-op tant que le consentement RGPD n'est pas donné. */
   screen(name: string, props?: Record<string, unknown>): void {
+    if (!hasAnalyticsConsent()) return;
     sink.screen(name, props);
   },
 };
