@@ -48,7 +48,7 @@ export async function registerForPush(playerId: string): Promise<string | null> 
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
-        name: 'Ping Pang Paris',
+        name: 'Panger',
         importance: Notifications.AndroidImportance.DEFAULT,
       });
     }

@@ -571,7 +571,7 @@ export default function OnboardingScreen() {
               <>
                 <ThemedText type="title">Dernière étape !</ThemedText>
                 <ThemedText type="default" themeColor="textSecondary" style={styles.sub}>
-                  Active ces options pour profiter à fond de Ping Pang. Tu pourras toujours les régler plus tard.
+                  Active ces options pour profiter à fond de Panger. Tu pourras toujours les régler plus tard.
                 </ThemedText>
                 <View style={styles.list}>
                   <PermRow

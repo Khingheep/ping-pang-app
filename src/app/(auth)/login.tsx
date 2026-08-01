@@ -63,7 +63,7 @@ export default function LoginScreen() {
               <View style={styles.dash} />
             </View>
             <ThemedText type="title" style={styles.h1}>
-              Ping Pang{'\n'}Paris
+              Panger
             </ThemedText>
             <ThemedText type="default" themeColor="textSecondary" style={styles.tagline}>
               Connecte-toi pour retrouver ta progression.

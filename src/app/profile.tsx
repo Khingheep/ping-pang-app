@@ -647,7 +647,7 @@ function PppMatchCard({ m, myName }: { m: MatchView; myName: string }) {
       <View style={styles.matchMeta}>
         <View style={[styles.srcBadge, styles.srcPpp]}>
           <ThemedText type="small" themeColor="onBrand" style={styles.srcBadgeTxt}>
-            Ping Pang
+            Panger
           </ThemedText>
         </View>
         <ThemedText type="small" themeColor="textMuted">

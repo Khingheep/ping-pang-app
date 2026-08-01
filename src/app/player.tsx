@@ -358,7 +358,7 @@ export default function PlayerScreen() {
       <SwipeSheet visible={reportOpen} onClose={() => setReportOpen(false)} style={styles.reportSheet}>
         <ThemedText type="cardTitle">Signaler {p?.display_name} ?</ThemedText>
         <ThemedText type="small" themeColor="textSecondary" style={styles.reportSheetSub}>
-          Le signalement remonte aux admins Ping Pang Paris.
+          Le signalement remonte aux admins Panger.
         </ThemedText>
         {REPORT_REASONS.map((r) => (
           <Pressable key={r.reason} style={styles.reportOption} onPress={() => sendReport(r.reason)}>

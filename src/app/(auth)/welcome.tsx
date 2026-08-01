@@ -29,7 +29,7 @@ export default function WelcomeScreen() {
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.content}>
           <ThemedText type="title" style={styles.brand}>
-            Ping Pang Paris
+            Panger
           </ThemedText>
           <ThemedText type="subtitle" style={styles.tagline}>
             La communauté du ping-pong parisien.

@@ -465,7 +465,7 @@ export default function TournoiScreen() {
   }
 
   function shareCode() {
-    Share.share({ message: `Rejoins mon tournoi « ${tournament.name} » sur Ping Pang : code ${tournament.code}` }).catch(() => {});
+    Share.share({ message: `Rejoins mon tournoi « ${tournament.name} » sur Panger : code ${tournament.code}` }).catch(() => {});
   }
 
   const poules = [...new Set(players.map((p) => p.poule).filter((x): x is string => !!x))].sort();

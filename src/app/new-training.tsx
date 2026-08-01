@@ -667,7 +667,7 @@ export default function NewTrainingScreen() {
                   <TextInput
                     style={[styles.search, partnerPlayers.length > 0 && { marginTop: Spacing.two }]}
                     placeholder={
-                      partnerPlayers.length ? 'Ajouter un autre joueur' : 'Rechercher un joueur Ping Pang Paris'
+                      partnerPlayers.length ? 'Ajouter un autre joueur' : 'Rechercher un joueur Panger'
                     }
                     placeholderTextColor={Palette.grey}
                     value={partnerQuery}

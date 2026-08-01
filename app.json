@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Ping Pang Paris",
+    "name": "Panger",
     "slug": "ping-pang-paris",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,13 +10,13 @@
     "backgroundColor": "#F5F6F3",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "paris.pingpang.app",
+      "bundleIdentifier": "paris.panger.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "paris.pingpang.app",
+      "package": "paris.panger.app",
       "adaptiveIcon": {
         "backgroundColor": "#092C25",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -41,7 +41,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Ping Pang utilise ta position pour trouver des joueurs et des tables près de toi."
+          "locationWhenInUsePermission": "Panger utilise ta position pour trouver des joueurs et des tables près de toi."
         }
       ],
       [
@@ -61,8 +61,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Ping Pang accède à tes photos pour choisir ton avatar.",
-          "cameraPermission": "Ping Pang utilise la caméra pour prendre ta photo de profil."
+          "photosPermission": "Panger accède à tes photos pour choisir ton avatar.",
+          "cameraPermission": "Panger utilise la caméra pour prendre ta photo de profil."
         }
       ]
     ],
