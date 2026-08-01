@@ -126,7 +126,7 @@ export default function TrainScreen() {
           </Pressable>
 
           {/* CTA principal */}
-          <Pressable style={styles.logBtn} onPress={() => router.push('/new-training')}>
+          <Pressable testID="train-log-cta" style={styles.logBtn} onPress={() => router.push('/new-training')}>
             <ThemedText type="cardTitle" style={styles.logBtnTxt}>
               🏓  Noter une séance
             </ThemedText>

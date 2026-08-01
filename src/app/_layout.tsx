@@ -62,6 +62,7 @@ function RootNavigator() {
       <Stack.Screen name="new-match" options={{ presentation: 'modal' }} />
       <Stack.Screen name="new-slot" options={{ presentation: 'modal' }} />
       <Stack.Screen name="new-training" />
+      <Stack.Screen name="train" />
       <Stack.Screen name="mes-seances" />
       <Stack.Screen name="mes-matchs" />
       <Stack.Screen name="challenge" />

@@ -9,7 +9,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { type Href, router } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -164,7 +164,7 @@ export default function PartiesScreen() {
       setSelected(homeVenue.id);
       snapTo(true);
     } else {
-      router.push('/profile');
+      router.push('/profil' as Href);
     }
   }
 

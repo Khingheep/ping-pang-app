@@ -38,7 +38,7 @@ import { SwipeSheet } from '@/components/swipe-sheet';
 
 const TRACK = Colors.light.backgroundSelected; // fond des barres de progression sur card blanche
 
-const TABS = ['Vous', 'Derniers matchs'] as const;
+const TABS = ['Vous', 'Entraînements', 'Derniers matchs'] as const;
 
 function dayKey(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
@@ -339,9 +339,7 @@ export default function ProfileScreen() {
     <View style={styles.root}>
       <SafeAreaView edges={['top']} style={styles.flex}>
         <View style={styles.topbar}>
-          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} hitSlop={12}>
-            <Ionicons name="chevron-back" size={26} color={Palette.onyx} />
-          </Pressable>
+          <View style={{ width: 26 }} />
           <ThemedText type="cardTitle">Profil</ThemedText>
           <Pressable onPress={() => router.push('/settings')} hitSlop={12}>
             <Ionicons name="settings-outline" size={22} color={Palette.onyx} />
@@ -350,7 +348,7 @@ export default function ProfileScreen() {
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {/* Hero */}
-          <View style={styles.hero}>
+          <View style={styles.hero} testID="profil-hero">
             <Avatar name={name} size={56} color={Palette.purple} uri={profile?.avatar_url} />
             <View style={styles.heroText}>
               <ThemedText type="subtitle">{name}</ThemedText>
@@ -545,6 +543,46 @@ export default function ProfileScreen() {
           ) : null}
 
           {tab === 1 ? (
+            <View style={styles.tabBody}>
+              <Pressable style={styles.addTrainingBtn} onPress={() => router.push('/new-training')}>
+                <Ionicons name="add-circle" size={22} color={Palette.onyx} />
+                <ThemedText type="smallBold">Ajouter un entraînement</ThemedText>
+              </Pressable>
+              {sessions.length === 0 ? (
+                <View style={styles.empty}>
+                  <ThemedText type="default" themeColor="textSecondary">
+                    Aucun entraînement pour l&apos;instant. Ajoute ta première séance ✍️
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.list}>
+                  {sessions.slice(0, 20).map((s) => (
+                    <Pressable
+                      key={s.id}
+                      style={styles.matchCard}
+                      onPress={() => router.push({ pathname: '/session', params: { id: s.id } })}>
+                      <View style={styles.matchMeta}>
+                        <ThemedText type="smallBold">{shortDate(s.created_at)}</ThemedText>
+                        <ThemedText type="small" themeColor="textMuted">
+                          {s.duration_min} min
+                        </ThemedText>
+                      </View>
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                        {[s.feeling, s.venue?.name].filter(Boolean).join(' · ') || 'Séance'}
+                      </ThemedText>
+                    </Pressable>
+                  ))}
+                  <Pressable style={styles.seeAll} onPress={() => router.push('/train')}>
+                    <ThemedText type="smallBold" themeColor="brand">
+                      Voir tous mes entraînements
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          {tab === 2 ? (
             <View style={styles.tabBody}>
               {unifiedMatches.length === 0 ? (
                 <View style={styles.empty}>
@@ -847,6 +885,18 @@ const styles = StyleSheet.create({
     padding: Spacing.four,
   },
   list: { gap: Spacing.two },
+  addTrainingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    backgroundColor: Palette.white,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.three,
+  },
+  seeAll: { alignItems: 'center', paddingVertical: Spacing.three },
 
   matchCard: {
     backgroundColor: Palette.white,

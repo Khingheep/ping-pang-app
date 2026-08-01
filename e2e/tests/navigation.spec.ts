@@ -13,7 +13,7 @@ const TABS: { label: string; assert: (p: import('@playwright/test').Page) => Pro
   { label: 'Ranking', assert: (p) => expect(p.getByText('Ranking', { exact: true }).first()).toBeVisible() },
   { label: 'Accueil', assert: (p) => expect(p.getByText('E2E Runner').first()).toBeVisible() },
   { label: 'Map', assert: (p) => expect(p.getByText('Où jouer ?')).toBeVisible() },
-  { label: 'Train', assert: (p) => expect(p.getByTestId('train-hero')).toBeVisible() },
+  { label: 'Profil', assert: (p) => expect(p.getByTestId('profil-hero')).toBeVisible() },
 ];
 
 test('TC-02 la tab bar navigue entre les 5 onglets', async ({ page }) => {

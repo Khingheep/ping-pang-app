@@ -361,7 +361,7 @@ export default function FeedScreen() {
     <>
       {/* Header marque (plein cadre) */}
       <View style={[styles.header, { paddingTop: insets.top + Spacing.three }]}>
-        <Pressable style={styles.headerProfile} onPress={() => router.push('/profile' as Href)} hitSlop={8}>
+        <Pressable style={styles.headerProfile} onPress={() => router.push('/profil' as Href)} hitSlop={8}>
           <Avatar name={name} size={48} color={Palette.purple} uri={profile?.avatar_url} />
           <View style={{ flex: 1 }}>
             <ThemedText type="title" numberOfLines={1}>

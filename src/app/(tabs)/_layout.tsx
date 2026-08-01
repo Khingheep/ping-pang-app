@@ -4,7 +4,7 @@ import { Icon } from '@/components/icon';
 import { TabBar } from '@/components/tab-bar';
 import { Palette } from '@/constants/theme';
 
-// Structure design « Ping Pang Connect » : Défis · Ranking · Accueil(centre) · Map · Train
+// Onglets : Défis · Ranking · Accueil(centre) · Map · Profil (bas-droite, cf. retour fondateur).
 // Icônes Material Symbols Rounded — contour au repos, rempli quand l'onglet est actif.
 // Barre custom (bouton central en dôme) → cf. components/tab-bar.tsx.
 export default function TabsLayout() {
@@ -52,11 +52,11 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="train"
+        name="profil"
         options={{
-          title: 'Train',
+          title: 'Profil',
           tabBarIcon: ({ color, size, focused }) => (
-            <Icon name="fitness_center" color={color} size={size} fill={focused} />
+            <Icon name="person" color={color} size={size} fill={focused} />
           ),
         }}
       />
